@@ -17,7 +17,7 @@ Unison is a client-only React app for planning dance formations. There's no serv
 | Language | TypeScript 7 | `tsc -b` runs before every build. |
 | UI | React 19 | Function components and hooks only. |
 | Build | Vite 8 + `@vitejs/plugin-react` + `vite-plugin-singlefile` | Configured in `vite.config.ts`. |
-| Tests | Vitest 5 | Unit tests for pure model code (Node, no DOM). |
+| Tests | Vitest 5 | Unit tests for model and store code (Node, no DOM). |
 | Lint | Oxlint | Configured in `.oxlintrc.json` (React hooks rules). |
 | Rendering | SVG | The stage and thumbnails are plain SVG elements rendered by React. |
 | Styling | One global stylesheet | `src/index.css`, dark theme driven by CSS variables. |
@@ -40,25 +40,29 @@ scripts/
   check-private.mjs      Scans files to be committed for personal or private information (see §10)
 .npmrc                   Keeps package-lock.json free of registry URLs (see §10)
 .gitattributes           Forces LF line endings on every OS (see §10)
+.gitignore               Ignores node_modules/, dist/ and .projects/
+.projects/               Local folder for your own .unison project files; git-ignored, never committed
 .oxlintrc.json           Lint rules
 tsconfig*.json           TypeScript project references (app = src/, node = vite.config.ts)
 src/
-  main.tsx               Entry: loads autosave or demo, starts autosave, renders <App>
-  App.tsx                Layout shell + global keyboard shortcuts
+  main.tsx               Entry: restores the autosaved project (if any), starts autosave, renders <App>
+  App.tsx                Shows Welcome or the Editor (layout shell + global keyboard shortcuts)
   index.css              All styles
   model/                 Pure data + logic. No React, no DOM, no browser APIs except crypto.getRandomValues
     types.ts             Data types (Choreography, Dancer, Formation, Point, Positions, StageSize)
     stage.ts             Stage geometry: snapping, clamping, offstage test, group drag math
-    choreography.ts      Factories (new piece, demo piece) and pure edit functions
+    choreography.ts      Factories (new project, sample project for tests) and pure edit functions
     timeline.ts          Playback timing: formation start times, total length, sampling/interpolation
     file.ts              Save-file serialize/parse with validation and repair
     *.test.ts            Vitest unit tests, next to the code they test
   state/                 App state and side effects
-    store.ts             Global editor store: document, selection, view options, undo/redo
-    persistence.ts       Autosave (localStorage), New/Open/Save
+    store.ts             Global editor store: open project (or none), selection, view options, undo/redo
+    persistence.ts       Autosave (localStorage), New/Open/Save of .unison project files
     useMotion.ts         Hook: glide between formations and full playback (requestAnimationFrame)
+    store.test.ts        Vitest unit tests for the store (no project open, open, undoable replace)
   components/            React UI
-    TopBar.tsx           App name, piece name, undo/redo, New/Open/Save
+    Welcome.tsx          Start screen while no project is open: New project / Open project…
+    TopBar.tsx           App name, project name, undo/redo, New/Open/Save
     Stage.tsx            SVG stage: grid, wings, dancers, ghosts/paths, drag and box select
     Timeline.tsx         Transport (prev/play/next, clock, progress) + formation strip with thumbnails
     Inspector.tsx        Right panel: formation, selected dancers, dancer list, stage and view options, shortcuts
@@ -68,7 +72,9 @@ src/
 
 ## 3. Screen layout
 
-`App` renders a CSS grid (`.app` in `index.css`) with four areas:
+With **no project open**, `App` renders only the `Welcome` screen: a centered card with **New project** and **Open project…**. There's no demo or sample project at startup.
+
+With a project open, `App` renders the editor as a CSS grid (`.app` in `index.css`) with four areas:
 
 ```text
 ┌──────────────────────── TopBar (top) ─────────────────────────┐
@@ -133,8 +139,8 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `formationTitle(f, i)` | Display name with the `Formation N` fallback. |
 | `createDancer(i)`, `createFormation(name, positions)` | Factories. New formations default to `hold: 2`, `transition: 1.5`. |
 | `lineUp(count, stage)` | Starting positions: centered rows, 2 m apart if they fit across the stage, else 1 m. |
-| `createChoreography(n)` | New piece: 12 × 8 m stage, `n` dancers lined up, one formation. |
-| `createDemo()` | First-launch sample: 6 named dancers (Ava…Fay), 4 formations (line, V, circle, exit to wings). |
+| `createChoreography(n)` | New project: 12 × 8 m stage, `n` dancers lined up, one formation. |
+| `createDemo()` | Sample project (6 named dancers Ava…Fay, 4 formations: line, V, circle, exit to wings). Used by unit tests; the app never loads it. |
 | `setPositions(doc, i, updates)` | Merge position updates into formation `i`. |
 | `updateFormation(doc, i, patch)` | Patch `name`, `hold`, `transition`, `notes`. |
 | `updateDancers(doc, ids, patch)` | Patch `name`, `label`, `color` on several dancers. |
@@ -172,26 +178,31 @@ Playback time `t` (seconds) runs through each formation as *hold* then *transiti
 A single module-level store read in React through `useEditor()` (`useSyncExternalStore`).
 
 ```ts
-EditorState { doc; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+EditorState { doc: Choreography | null; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+OpenState   = EditorState & { doc: Choreography }   // narrowed with isOpen(state)
 ViewOptions { snap; names; prevPaths; nextPaths }
 Snapshot    { doc; current }
 ```
 
+`doc` is `null` until the first project is created or opened (or restored from autosave). There's no way to close a project, so once a project is open, `doc` stays non-null.
+
 | Method | Behavior |
 | --- | --- |
-| `init(doc, view)` | Called once in `main.tsx` before rendering. |
-| `commit(recipe, coalesce?)` | **The only way to change the document.** Applies `recipe(doc)`; if it returns the same object, nothing happens. Otherwise pushes the previous `{ doc, current }` onto `past` (max 200), clears `future`. Consecutive commits with the same non-undefined `coalesce` key merge into one undo step (used for typing and number fields; keys look like `name:<formationId>`, `nudge:<index>:<ids>`). |
+| `init(doc, view)` | Called once in `main.tsx` before rendering, with the autosaved project or `null`. |
+| `commit(recipe, coalesce?)` | **The only way to change the document.** No-op when no project is open. Applies `recipe(doc)`; if it returns the same object, nothing happens. Otherwise pushes the previous `{ doc, current }` onto `past` (max 200), clears `future`. Consecutive commits with the same non-undefined `coalesce` key merge into one undo step (used for typing and number fields; keys look like `name:<formationId>`, `nudge:<index>:<ids>`). |
+| `open(doc)` | Shows `doc` as the open project (New and Open use it), then resets `current` and the selection. If a project is already open, the replacement goes through `commit`, so it **can be undone**; the first project opened from the welcome screen starts with empty history. |
 | `undo()` / `redo()` | Restore a snapshot, including which formation was current. Reset coalescing. |
 | `setCurrent(i)`, `select(ids)`, `setView(patch)` | Not undoable. |
 
-Every state change clamps `current` to a valid index and, when the document changed, drops selected ids that no longer exist.
+While a project is open, every state change clamps `current` to a valid index and, when the document changed, drops selected ids that no longer exist.
 
 ### `persistence.ts`
 
-- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc` or `view`, writes them to `localStorage` keys `unison.autosave.v1` and `unison.view.v1`. Write errors are ignored.
-- **Startup:** `loadAutosave()` parses the saved doc with `parseChoreography` (or returns `null`); `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
-- `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `TopBar` shows a warning.
-- **New:** `prompt` for 1–100 dancers → `createChoreography`. **Open:** hidden `<input type=file>` → `parseChoreography`, errors via `alert`. **Save:** downloads `<piece name>.unison.json` through a Blob link (name stripped of characters that are invalid in file names, max 80 chars, fallback `unison`). New and Open replace the piece through `commit`, so **they can be undone**, then reset `current` and the selection.
+- **Project files:** a project is saved as `<project name>.unison` (`FILE_EXTENSION`), containing `serialize(doc)` JSON (see §8).
+- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc` or `view`, writes them to `localStorage` keys `unison.autosave.v1` (only when a project is open) and `unison.view.v1`. Write errors are ignored.
+- **Startup:** `loadAutosave()` parses the saved project with `parseChoreography`, or returns `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
+- `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
+- **New:** `prompt` for 1–100 dancers → `createChoreography` → `editor.open`. **Open:** hidden `<input type=file accept=".unison">` → `parseChoreography` → `editor.open`; errors via `alert`. **Save:** downloads `<project name>.unison` through a Blob link (name stripped of characters that are invalid in file names, max 80 chars, fallback `Untitled`). The Blob type is `application/octet-stream` so browsers keep the exact file name instead of appending an extension like `.json`.
 
 ### `useMotion.ts`: what the stage shows
 
@@ -219,11 +230,11 @@ flowchart LR
   Store -- subscribe --> Autosave[persistence.ts → localStorage]
 ```
 
-`App` is the only component that calls `useEditor()`; children get state via props and call `editor.*` methods directly to make changes.
+`App` is the only component that calls `useEditor()`. It renders `Welcome` when `isOpen(state)` is false, otherwise the internal `Editor` component with an `OpenState`. Editor children get state via props and call `editor.*` methods directly to make changes; `useMotion` lives in `Editor`, so it only runs while a project is open (it still guards against a missing doc).
 
 ### `App.tsx`
 
-Wires the four regions together, defines `addFormation` (duplicate the current formation, then glide to the copy) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`):
+`Editor` wires the four regions together, defines `addFormation` (duplicate the current formation, then glide to the copy) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`). The welcome screen has no keyboard shortcuts.
 
 | Keys | Action | Notes |
 | --- | --- | --- |
@@ -265,9 +276,10 @@ Sections, top to bottom:
 
 `NumberField` keeps the raw text while typing so a field can be cleared and retyped; it only commits valid, clamped numbers. Text and number edits use coalesce keys so each field edit is one undo step.
 
-### `TopBar.tsx`, `Icon.tsx`, `ui.ts`
+### `TopBar.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
 
-- `TopBar`: logo and name, editable piece name, autosave warning when needed, undo/redo, New, Open…, Save. Calls `onBeforeReplace` (stop motion) before New/Open.
+- `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
+- `TopBar`: logo and name, editable project name, autosave warning when needed, undo/redo, New, Open…, Save. Calls `onBeforeReplace` (stop motion) before New/Open.
 - `Icon`: inline SVG paths (`play`, `pause`, `prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`) rendered with class `glyph`; `Logo` for the brand mark.
 - `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `clock(seconds)`; `toggleId(ids, id)`.
 
@@ -275,15 +287,15 @@ Sections, top to bottom:
 
 Single dark theme defined by CSS variables on `:root` (`--bg`, `--panel`, `--accent`, `--floor`, …). Classes are plain and global (`.btn`, `.btn.icon`, `.btn.primary`, `.card`, `.field`, …). Button-size class `.btn.icon` and the SVG glyph class `.glyph` are deliberately different names. There's no CSS-in-JS or CSS modules.
 
-## 8. Save-file format
+## 8. Project file format
 
-A saved piece (`*.unison.json`) is `serialize(doc)`:
+A project file (`<name>.unison`) contains `serialize(doc)`, which is plain JSON:
 
 ```json
 {
   "format": "unison",
   "version": 1,
-  "name": "Demo piece",
+  "name": "Spring show",
   "stage": { "width": 12, "depth": 8 },
   "dancers": [{ "id": "3f9c…", "name": "Ava", "label": "A", "color": "#f87171" }],
   "formations": [
@@ -292,7 +304,7 @@ A saved piece (`*.unison.json`) is `serialize(doc)`:
 }
 ```
 
-The same JSON is stored in `localStorage` for autosave. **Any change to this shape must bump `version`** and teach `parseChoreography` to read (migrate) older versions, so existing files and autosaves keep opening.
+The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON is stored in `localStorage` for autosave. **Any change to this shape must bump `version`** and teach `parseChoreography` to read (migrate) older versions, so existing files and autosaves keep opening.
 
 ## 9. Hard constraints
 
@@ -311,7 +323,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 - **Imports use explicit extensions** (`./store.ts`, `./Stage.tsx`), and type-only imports use `import type` (`verbatimModuleSyntax`). `erasableSyntaxOnly` is on, so no `enum`, `namespace` or constructor parameter properties.
 - **Formatting:** no semicolons, single quotes, 2-space indent, compact one-line calls where readable.
 - **Comments** only where something is non-obvious; short JSDoc on exports explains behavior, not parameters.
-- **Tests:** Vitest files next to the code (`*.test.ts`), focused on behavior of the model layer.
+- **Tests:** Vitest files next to the code (`*.test.ts`), focused on behavior of the model layer and the store.
 - **Line endings:** LF everywhere, enforced by `.gitattributes` (`* text=auto eol=lf`). Keep new files LF.
 - **Lockfile:** `.npmrc` sets `omit-lockfile-registry-resolved=true`, so `package-lock.json` never records registry URLs (for example a company mirror). Keep it that way.
 - **No personal or employer information, ever** (the full rule is at the top of [AGENTS.md](../AGENTS.md)): no names, usernames, emails, machine paths, internal URLs or credentials anywhere in the repo. `scripts/check-private.mjs` (`npm run check:private`) enforces what it can: it reads `git ls-files --cached --others --exclude-standard` (or the files passed as arguments), skips binary files and itself, and fails on email addresses, local paths, credential patterns, `"resolved"` URLs in `package-lock.json`, and link hosts missing from its `ALLOWED_HOSTS` list (lockfile links are exempt because they're npm package metadata). Names and employer details in prose can only be caught by reading the changes.
@@ -320,7 +332,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: timeline sampling, drag snapping/clamping, file round-trip/repair/rejection, formation and dancer edits. |
+| `npm test` | Unit tests: timeline sampling, drag snapping/clamping, file round-trip/repair/rejection, formation and dancer edits, store behavior with no project / opening / undoable replace. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |

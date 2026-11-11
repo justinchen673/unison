@@ -60,6 +60,58 @@ textarea {
     'timeline side';
 }
 
+/* ---------- Welcome ---------- */
+.welcome {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  padding: 24px;
+}
+
+.welcome-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(440px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.welcome-card h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 24px;
+}
+
+.welcome-card h1 .logo {
+  width: 32px;
+  height: 32px;
+}
+
+.welcome-card p {
+  margin: 0;
+}
+
+.welcome-card code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.welcome-actions .btn {
+  flex: 1;
+  height: 36px;
+}
+
 /* ---------- Top bar ---------- */
 .topbar {
   grid-area: top;

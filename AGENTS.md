@@ -17,7 +17,8 @@ Never add:
 - employer or organization names tied to the maintainer, internal tools, internal or corporate URLs, package mirrors or feeds;
 - local machine paths (Windows drive paths, user home folders), machine or user names;
 - credentials of any kind: tokens, keys, passwords, connection strings;
-- anything copied from your own environment, session, logs or memory.
+- anything copied from your own environment, session, logs or memory;
+- anything from `.projects/`. That git-ignored folder holds real project files (with real dancer names), so never copy their contents into tracked files, tests or docs.
 
 Use obviously fictional sample data (like the demo dancers Ava, Ben, Cleo…).
 

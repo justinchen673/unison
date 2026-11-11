@@ -2,12 +2,12 @@ import { useState, type ReactNode } from 'react'
 import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, removeFormation, updateDancers, updateFormation } from '../model/choreography.ts'
 import { clamp } from '../model/stage.ts'
 import type { StageSize } from '../model/types.ts'
-import { editor, type EditorState, type ViewOptions } from '../state/store.ts'
+import { editor, type OpenState, type ViewOptions } from '../state/store.ts'
 import { Icon } from './Icon.tsx'
 import { inkFor, shortcut, toggleId } from './ui.ts'
 
 interface InspectorProps {
-  state: EditorState
+  state: OpenState
   onAddFormation: () => void
 }
 
@@ -25,7 +25,7 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
   const resize = (patch: Partial<StageSize>, field: string) =>
     editor.commit((d) => ({ ...d, stage: { ...d.stage, ...patch } }), field)
   const add = () => {
-    const added = addDancer(editor.get().doc, current)
+    const added = addDancer(doc, current)
     editor.commit(() => added.doc)
     editor.select([added.id])
   }

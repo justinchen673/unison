@@ -8,7 +8,8 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 
 1. Build it once (see [Developing](#developing)) or get the built file from a teammate. The whole app is **one file**: `dist/index.html`. Rename it to `Unison.html` if you like and share it via Drive, Teams, email, or AirDrop.
 2. Double-click the file. It opens in your default browser (Edge, Chrome, Safari, or Firefox). There's no server, no account, and no internet needed.
-3. Your piece **autosaves** in the browser. Use **Save** to download a `.unison.json` file (for backups or sharing) and **Open…** to load one.
+3. Click **New project** (you choose how many dancers) or **Open project…** to load a `.unison` file.
+4. Your open project **autosaves** in the browser and comes back the next time you open Unison. Use **Save** to download it as a `<project name>.unison` file (for backups or sharing) and **Open…** to load one.
 
 > Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Use **Save** to be safe.
 

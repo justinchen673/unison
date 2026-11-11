@@ -3,16 +3,22 @@ import { Inspector } from './components/Inspector.tsx'
 import { Stage } from './components/Stage.tsx'
 import { Timeline } from './components/Timeline.tsx'
 import { TopBar } from './components/TopBar.tsx'
+import { Welcome } from './components/Welcome.tsx'
 import { duplicateFormation, removeDancers, setPositions } from './model/choreography.ts'
 import { SNAP_STEP, dragOffset, shift } from './model/stage.ts'
 import { openPiece, savePiece } from './state/persistence.ts'
-import { editor, useEditor } from './state/store.ts'
+import { editor, isOpen, useEditor, type OpenState } from './state/store.ts'
 import { useMotion } from './state/useMotion.ts'
 
 const ARROWS = new Map([['ArrowLeft', [-1, 0]], ['ArrowRight', [1, 0]], ['ArrowUp', [0, -1]], ['ArrowDown', [0, 1]]])
 
+/** Shows the welcome screen until a project is created or opened, then the editor. */
 export default function App() {
   const state = useEditor()
+  return isOpen(state) ? <Editor state={state} /> : <Welcome />
+}
+
+function Editor({ state }: { state: OpenState }) {
   const { doc, current, selection, view } = state
   const motion = useMotion(doc, current)
 

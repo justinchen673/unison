@@ -36,6 +36,10 @@ export function useMotion(doc: Choreography, current: number) {
         }
       } else {
         const latest = editor.get().doc
+        if (!latest) {
+          setMotion(null)
+          return
+        }
         const time = playTime(latest, motion, t)
         editor.setCurrent(sampleAt(latest, time).index)
         if (time >= totalDuration(latest)) {
@@ -49,7 +53,7 @@ export function useMotion(doc: Choreography, current: number) {
   }, [motion])
 
   const goTo = (index: number) => {
-    if (index < 0 || index >= editor.get().doc.formations.length) return
+    if (index < 0 || index >= (editor.get().doc?.formations.length ?? 0)) return
     const t = performance.now()
     setMotion({ kind: 'glide', from: framePositions(doc, current, motion, t), to: index, startedAt: t })
     setNow(t)
