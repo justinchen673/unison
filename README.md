@@ -44,6 +44,7 @@ npm install      # once
 npm run dev      # hot-reloading dev server at http://localhost:5173
 npm test         # unit tests (Vitest)
 npm run lint     # Oxlint
+npm run check:private  # make sure no personal or private info is about to be committed
 npm run build    # type-check, then write the single-file app to dist/index.html
 ```
 
@@ -54,8 +55,11 @@ src/
   model/        Pure data and logic (no React): types, choreography edits, timeline sampling, file parsing
   state/        Editor store with undo/redo, playback/glide hook, autosave and file save/open
   components/   React UI: Stage (SVG), Timeline, Inspector, TopBar
-docs/           ArrangeUs research, tech plan and roadmap
+scripts/        Repo tooling (check-private.mjs: scan for personal or private info)
+docs/           Architecture, ArrangeUs research, tech plan and roadmap
 ```
+
+See [docs/architecture.md](docs/architecture.md) for the full architecture. AI agents should start with [AGENTS.md](AGENTS.md).
 
 - Stage coordinates are meters from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
 - Saved files are versioned JSON (`"format": "unison", "version": 1`), so future versions can migrate old files.

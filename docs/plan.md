@@ -31,13 +31,7 @@ The option to change course stays open: the identical build can go to GitHub Pag
 
 ## Architecture
 
-- **`src/model/`**: pure TypeScript with no UI. A `Choreography` has a stage size, dancers, and formations. Each formation has positions per dancer, hold and transition seconds, and notes. Positions are meters from center stage, so they stay put when the stage is resized. Edits are pure functions that return new objects, which keeps them easy to unit test.
-- **`src/state/`**:
-  - `store.ts` is a single store read through `useSyncExternalStore`. Undo/redo keeps snapshots of the immutable document (cheap because unchanged parts are shared), and consecutive edits to one field are coalesced into a single undo step.
-  - `useMotion.ts` drives the glide between formations and full playback with `requestAnimationFrame` and `sampleAt(doc, time)`. Music sync will build on `sampleAt`.
-  - `persistence.ts` autosaves to localStorage and saves or opens `.unison.json` files with a plain download and file picker, which work in every browser.
-- **`src/components/`**: the SVG `Stage` (drag, box select, snapping, ghosts and paths), the `Timeline` strip with thumbnails, the `Inspector` side panel, and the `TopBar`.
-- **File format**: JSON with `format` and `version` fields, so later versions can migrate older files.
+The complete, always-current architecture lives in [architecture.md](architecture.md).
 
 ## Prototype scope (v0.1, done)
 
