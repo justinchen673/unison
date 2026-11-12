@@ -38,4 +38,12 @@ describe('editor store', () => {
     editor.open(createChoreography(3), null, false)
     expect(hasUnsavedChanges(editor.get())).toBe(true)
   })
+
+  it('closing goes back to no open project with nothing left to undo', () => {
+    editor.open(createChoreography(3), 'Show.unison', true)
+    rename('edited')
+    editor.close()
+    expect(editor.get()).toMatchObject({ doc: null, savedDoc: null, fileName: null, past: [], future: [] })
+    expect(hasUnsavedChanges(editor.get())).toBe(false)
+  })
 })

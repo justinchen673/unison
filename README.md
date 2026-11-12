@@ -9,9 +9,10 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 1. Build it once (see [Developing](#developing)) or get the built file from a teammate. The whole app is **one file**: `dist/index.html`. Rename it to `Unison.html` if you like and share it via Drive, Teams, email, or AirDrop.
 2. Double-click the file. It opens in your default browser (Edge, Chrome, Safari, or Firefox). There's no server, no account, and no internet needed.
 3. Click **New project** (you choose how many dancers) or **Open project…** to load a `.unison` file.
-4. Your open project **autosaves** in the browser and comes back the next time you open Unison. The top bar shows whether it has **unsaved changes**, and Unison asks before New or Open would discard them.
+4. Your open project **autosaves** in the browser and comes back the next time you open Unison. The top bar shows whether it has **unsaved changes**, and Unison asks before New or Open would discard them. Click the **Unison logo** to close the project and go back to the start screen.
 5. **Saving to a file:**
    - **Edge and Chrome:** **Save** writes straight back to the file you opened (the browser asks once for permission to edit it). **Save as…** saves a new copy wherever you choose, and later Saves go to that copy. Unison remembers the file even after you close the browser. A new project's first Save asks where to put it.
+   - **Recent projects (Edge and Chrome):** files you've opened or saved are listed on the welcome screen and under the top bar's **Open ▾** menu. One click reopens a project instantly, without the (slow) file window. After a browser restart, the browser asks once whether Unison may edit that file.
    - **Safari and Firefox:** these browsers don't let pages write to your files, so **Save** downloads a `<project name>.unison` file instead.
 
 > Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Save to a file to be safe.

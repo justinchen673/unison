@@ -15,6 +15,13 @@ export interface ViewOptions {
   nextPaths: boolean
 }
 
+/** A project file that was opened or saved before (Edge and Chrome only), shown in the recent-projects lists. */
+export interface RecentProject {
+  handle: FileSystemFileHandle
+  /** Project name as of the last time the file was opened or saved. */
+  projectName: string
+}
+
 export interface EditorState {
   /** The open project, or null before one has been created or opened. */
   doc: Choreography | null
@@ -22,6 +29,8 @@ export interface EditorState {
   savedDoc: Choreography | null
   /** Name of the file Save writes to (browsers with file access only), or null. */
   fileName: string | null
+  /** Recently opened or saved project files, most recent first. Always empty in browsers without file access. */
+  recent: RecentProject[]
   /** Index of the formation being edited. */
   current: number
   /** Selected dancer ids. */
@@ -57,7 +66,7 @@ function set(patch: Partial<EditorState>) {
 /** Single global editor store. Every document change goes through `commit` so it can be undone. */
 export const editor = {
   init(doc: Choreography | null, view: ViewOptions, savedDoc: Choreography | null = null) {
-    state = { doc, savedDoc, fileName: null, current: 0, selection: [], view, past: [], future: [] }
+    state = { doc, savedDoc, fileName: null, recent: [], current: 0, selection: [], view, past: [], future: [] }
   },
   get: () => state,
   subscribe(listener: () => void) {
@@ -89,6 +98,14 @@ export const editor = {
   },
   setFileName(fileName: string | null) {
     set({ fileName })
+  },
+  /** Closes the project and returns to the welcome screen. */
+  close() {
+    coalesceKey = undefined
+    set({ doc: null, savedDoc: null, fileName: null, current: 0, selection: [], past: [], future: [] })
+  },
+  setRecent(recent: RecentProject[]) {
+    set({ recent })
   },
   undo() {
     const previous = state.past.at(-1)

@@ -45,7 +45,7 @@ scripts/
 .oxlintrc.json           Lint rules
 tsconfig*.json           TypeScript project references (app = src/, node = vite.config.ts)
 src/
-  main.tsx               Entry: restores the autosaved project (if any), starts autosave, renders <App>
+  main.tsx               Entry: restores the autosaved project (if any), starts autosave, restores the file link and recent list, renders <App>
   App.tsx                Shows Welcome or the Editor (layout shell + global keyboard shortcuts)
   index.css              All styles
   model/                 Pure data + logic. No React, no DOM, no browser APIs except crypto.getRandomValues
@@ -58,12 +58,14 @@ src/
   state/                 App state and side effects
     store.ts             Global editor store: open project (or none), selection, view options, undo/redo
     persistence.ts       Autosave (localStorage), New/Open/Save/Save as of .unison project files, unsaved-changes guard
-    fileHandles.ts       Save in place (Edge/Chrome): file pickers, write with permission, remember the linked file in IndexedDB
+    fileHandles.ts       Save in place (Edge/Chrome): file pickers, permissions, writing, linked file + recent list in IndexedDB
     useMotion.ts         Hook: short glide between formations (requestAnimationFrame)
-    store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking)
+    store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking, close)
   components/            React UI
-    Welcome.tsx          Start screen while no project is open: New project / Open project…
-    TopBar.tsx           App name, project name, undo/redo, New/Open/Save
+    Welcome.tsx          Start screen while no project is open: New project / Open project… / recent projects
+    TopBar.tsx           App name, project name, save status, undo/redo, New/Open/Save as/Save
+    OpenMenu.tsx         Top-bar "Open ▾" dropdown (Open a file… + recent projects), used once there are recent projects
+    RecentList.tsx       List of recent projects (one click to reopen, × to remove), shared by Welcome and OpenMenu
     Stage.tsx            SVG stage: grid, wings, dancers, ghosts/paths, drag and box select
     Timeline.tsx         Formation navigation (prev/next, "Formation N of M") + formation strip with thumbnails
     Inspector.tsx        Right panel: formation, selected dancers, dancer list, stage and view options, shortcuts
@@ -172,15 +174,16 @@ Used only for the short glide between formations. There's deliberately **no conc
 A single module-level store read in React through `useEditor()` (`useSyncExternalStore`).
 
 ```ts
-EditorState { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+EditorState   { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; recent: RecentProject[]; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+RecentProject { handle: FileSystemFileHandle; projectName }   // project name as of the last open/save of that file
 OpenState   = EditorState & { doc: Choreography }   // narrowed with isOpen(state)
 ViewOptions { snap; names; prevPaths; nextPaths }
 Snapshot    { doc; current }
 ```
 
-`doc` is `null` until the first project is created or opened (or restored from autosave). There's no way to close a project, so once a project is open, `doc` stays non-null.
+`doc` is `null` until the first project is created or opened (or restored from autosave), and again after the project is closed (clicking the logo).
 
-**Unsaved changes:** `savedDoc` is the document as last opened from or saved to a file (`null` if it never was). `hasUnsavedChanges(state)` is simply `doc !== savedDoc`. Because documents are immutable, undoing back to the saved version makes the project "saved" again. `fileName` is the name of the linked file Save writes to (Edge/Chrome only; `null` otherwise). Neither is part of undo history.
+**Unsaved changes:** `savedDoc` is the document as last opened from or saved to a file (`null` if it never was). `hasUnsavedChanges(state)` is simply `doc !== savedDoc`. Because documents are immutable, undoing back to the saved version makes the project "saved" again. `fileName` is the name of the linked file Save writes to (Edge/Chrome only; `null` otherwise). `recent` is the recent-projects list (Edge/Chrome only; always empty elsewhere). None of these are part of undo history.
 
 | Method | Behavior |
 | --- | --- |
@@ -189,6 +192,8 @@ Snapshot    { doc; current }
 | `open(doc, fileName, saved)` | Shows `doc` as the open project with a **fresh undo history**, resets `current` and the selection, and sets `fileName` and `savedDoc` (`doc` if `saved`, else `null`). Opening is deliberately not undoable: otherwise undo could bring back a different project while Save still points at the newly opened file and overwrite it. Unsaved work is protected by a confirmation in `persistence.ts` instead. |
 | `markSaved(doc, fileName)` | Records that `doc` (the version that was written, which may be older than the current doc if the user kept editing during the write) is saved, and the linked file name. |
 | `setFileName(name)` | Used when the remembered file link is restored after startup. |
+| `setRecent(list)` | Replaces the recent-projects list (only `persistence.ts` calls it). |
+| `close()` | Closes the project: `doc`, `savedDoc` and `fileName` become `null` and history is cleared, so `App` shows the welcome screen. |
 | `undo()` / `redo()` | Restore a snapshot, including which formation was current. Reset coalescing. |
 | `setCurrent(i)`, `select(ids)`, `setView(patch)` | Not undoable. |
 
@@ -202,7 +207,9 @@ While a project is open, every state change clamps `current` to a valid index an
   - **Safari and Firefox (no file access API):** Open uses a hidden `<input type=file accept=".unison">`; Save downloads `<project name>.unison` through a Blob link (type `application/octet-stream`, so browsers keep the exact name instead of appending `.json`). There's no Save as… button; nothing is ever linked.
 - **Remembering the linked file:** whenever the linked file changes, its handle is stored in IndexedDB (`rememberFile`; `null` deletes it). On startup, `restoreFileLink()` (called from `main.tsx`) re-links it if a project was restored, so Save keeps writing to the same file after the browser is reopened. The browser asks for write permission again on the first Save of a new session. A `generation` counter, bumped whenever the project is replaced, stops slow async work (restoring the link, writing a file) from applying to a project that was replaced in the meantime.
 - **New / Open** go through `replaceProject`, which updates `linkedFile` (null for New and for fallback Open) and calls `editor.open`. Both first call `okToReplace()`: if the project has unsaved changes, a `confirm` asks before discarding them. New prompts for 1–100 dancers → `createChoreography` (not saved: `savedDoc` is null). Open errors are shown with `alert`.
-- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. Write errors are ignored.
+- **Close** (`closeProject()`, the top-bar logo): also asks via `okToReplace()`, then unlinks the file (and forgets it in IndexedDB) and calls `editor.close()`. Autosave then removes the saved project from `localStorage`, so reopening the page shows the welcome screen too.
+- **Recent projects (Edge and Chrome):** opening a file, Save and Save as each call `addRecent(file, projectName)`, which moves that file to the top of the list (deduplicated with `isSameEntry`, max 8) and stores the list in IndexedDB. `loadRecent()` (from `main.tsx`) loads it at startup. `openRecent(entry)` reopens a project **without a file window**: after `okToReplace()`, it asks for read-write permission (no prompt within a session where it's already granted; one browser prompt after a restart, which also covers later saves), reads and parses the file, and links it. If the file was moved or deleted, an `alert` says so and the entry is dropped. `forgetRecent(entry)` removes one entry. The reason for this feature: the Windows file dialog itself takes about 1 s to open and another ~0.9 s to close (measured the same for the file-access picker and a plain file input), so skipping it is the only way to make reopening fast.
+- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. When no project is open, it removes the first two keys instead. Write errors are ignored.
 - **Startup:** `loadAutosave()` returns the saved project and whether it had unsaved changes (missing flag counts as unsaved), or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
 - `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
 
@@ -214,8 +221,10 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 | --- | --- |
 | `supportsFileHandles` | Both pickers exist. Everything else is only called when this is true. |
 | `pickFileToOpen(ext)`, `pickFileToSave(ext, suggestedName)` | Pickers filtered to `.unison`, sharing picker id `unison-projects` so the browser remembers the last folder. Return `null` when the user cancels. |
-| `writeFile(handle, text)` | Checks and, if needed, requests read-write permission (returns `false` if refused), then overwrites the file. |
+| `ensurePermission(handle, mode)` | Checks `'read'` or `'readwrite'` permission and asks the user if needed; returns `false` if refused. |
+| `writeFile(handle, text)` | `ensurePermission(handle, 'readwrite')`, then overwrites the file. Returns `false` if permission was refused. |
 | `rememberFile(handle \| null)`, `recallFile()` | Store/load the linked file handle in IndexedDB (database `unison`, store `files`, key `current`). Failures are swallowed; the only effect is that Save asks where to save. |
+| `saveRecentProjects(list)`, `loadRecentProjects()` | Store/load the recent-projects list (same store, key `recent`). Failures are swallowed; the list just won't survive a restart. |
 
 ### `useMotion.ts`: what the stage shows
 
@@ -286,11 +295,13 @@ Sections, top to bottom:
 
 `NumberField` keeps the raw text while typing so a field can be cleared and retyped; it only commits valid, clamped numbers. Text and number edits use coalesce keys so each field edit is one undo step.
 
-### `TopBar.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
+### `TopBar.tsx`, `OpenMenu.tsx`, `RecentList.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
 
-- `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
-- `TopBar`: logo and name, editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open…, Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
-- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`) rendered with class `glyph`; `Logo` for the brand mark.
+- `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), the **Recent projects** list when there is one (`App` passes `state.recent`), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
+- `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
+- `OpenMenu`: **Open ▾** button with a dropdown containing "Open a file…" (with its Ctrl/⌘+O hint) and the `RecentList`. Closes on choosing an item, clicking outside, or Esc.
+- `RecentList`: one row per recent project (project name, file name underneath); clicking a row calls `openRecent`, the faded **×** calls `forgetRecent`. It stays visible (not hover-only) so it works on touch screens too.
+- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`, `down`) rendered with class `glyph`; `Logo` for the brand mark.
 - `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`.
 
 ### Styling (`index.css`)
@@ -342,7 +353,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including dropping old timing fields), formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking. |
+| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including dropping old timing fields), formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking / close. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |

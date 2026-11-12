@@ -15,7 +15,7 @@ const ARROWS = new Map([['ArrowLeft', [-1, 0]], ['ArrowRight', [1, 0]], ['ArrowU
 /** Shows the welcome screen until a project is created or opened, then the editor. */
 export default function App() {
   const state = useEditor()
-  return isOpen(state) ? <Editor state={state} /> : <Welcome />
+  return isOpen(state) ? <Editor state={state} /> : <Welcome recent={state.recent} />
 }
 
 function Editor({ state }: { state: OpenState }) {

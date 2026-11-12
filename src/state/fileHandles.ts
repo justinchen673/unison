@@ -1,5 +1,6 @@
 // Save-in-place support through the browser's File System Access API (Edge and Chrome only).
 // The API isn't in TypeScript's DOM types yet, so the few pieces used are typed here.
+import type { RecentProject } from './store.ts'
 
 interface PickerOptions {
   /** Browsers remember the last folder per id, so open and save share one "projects folder". */
@@ -10,8 +11,8 @@ interface PickerOptions {
 
 type Permission = 'granted' | 'denied' | 'prompt'
 type WritableHandle = FileSystemFileHandle & {
-  queryPermission?(options: { mode: 'readwrite' }): Promise<Permission>
-  requestPermission?(options: { mode: 'readwrite' }): Promise<Permission>
+  queryPermission?(options: { mode: 'read' | 'readwrite' }): Promise<Permission>
+  requestPermission?(options: { mode: 'read' | 'readwrite' }): Promise<Permission>
 }
 
 const api = window as unknown as {
@@ -47,22 +48,28 @@ export async function pickFileToSave(extension: string, suggestedName: string): 
   }
 }
 
+/** Makes sure the page may read (and, for 'readwrite', edit) the file, asking the user if needed. Returns false if refused. */
+export async function ensurePermission(handle: FileSystemFileHandle, mode: 'read' | 'readwrite'): Promise<boolean> {
+  const h = handle as WritableHandle
+  if (!h.queryPermission || (await h.queryPermission({ mode })) === 'granted') return true
+  return (await h.requestPermission?.({ mode })) === 'granted'
+}
+
 /** Overwrites the file. Asks the browser for write permission first if needed; returns false if the user refuses. */
 export async function writeFile(handle: FileSystemFileHandle, text: string): Promise<boolean> {
-  const h = handle as WritableHandle
-  if (h.queryPermission && (await h.queryPermission({ mode: 'readwrite' })) !== 'granted') {
-    if ((await h.requestPermission?.({ mode: 'readwrite' })) !== 'granted') return false
-  }
+  if (!(await ensurePermission(handle, 'readwrite'))) return false
   const writable = await handle.createWritable()
   await writable.write(text)
   await writable.close()
   return true
 }
 
-// The linked file is remembered in IndexedDB (file handles can't go in localStorage) so Save keeps working after a restart.
+// The linked file and the recent-projects list are kept in IndexedDB (file handles can't go in localStorage), so they
+// survive a browser restart.
 const DB = 'unison'
 const STORE = 'files'
 const KEY = 'current'
+const RECENT_KEY = 'recent'
 
 function withStore(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -92,5 +99,22 @@ export async function recallFile(): Promise<FileSystemFileHandle | null> {
     return ((await withStore('readonly', (store) => store.get(KEY))) as FileSystemFileHandle | undefined) ?? null
   } catch {
     return null
+  }
+}
+
+export async function saveRecentProjects(list: RecentProject[]): Promise<void> {
+  try {
+    await withStore('readwrite', (store) => store.put(list, RECENT_KEY))
+  } catch {
+    // The list just won't survive a restart.
+  }
+}
+
+export async function loadRecentProjects(): Promise<RecentProject[]> {
+  try {
+    const list = await withStore('readonly', (store) => store.get(RECENT_KEY))
+    return Array.isArray(list) ? list.filter((e) => e?.handle && typeof e.projectName === 'string') : []
+  } catch {
+    return []
   }
 }

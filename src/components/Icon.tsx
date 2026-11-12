@@ -6,6 +6,7 @@ const PATHS = {
   redo: 'M21 10L15 5V9H10A6 6 0 0 0 10 21H13V19H10A4 4 0 0 1 10 11H15V15Z',
   left: 'M15 5l2 2-5 5 5 5-2 2-7-7z',
   right: 'M9 5l7 7-7 7-2-2 5-5-5-5z',
+  down: 'M7 10l5 5 5-5z',
 }
 
 export function Icon({ name }: { name: keyof typeof PATHS }) {
