@@ -3,20 +3,15 @@ import { formationTitle } from '../model/choreography.ts'
 import { WING } from '../model/stage.ts'
 import type { Choreography, Dancer, Formation, StageSize } from '../model/types.ts'
 import { Icon } from './Icon.tsx'
-import { clock } from './ui.ts'
 
 interface TimelineProps {
   doc: Choreography
   current: number
-  time: number
-  total: number
-  playing: boolean
   onSelect: (index: number) => void
-  onTogglePlay: () => void
   onAdd: () => void
 }
 
-export function Timeline({ doc, current, time, total, playing, onSelect, onTogglePlay, onAdd }: TimelineProps) {
+export function Timeline({ doc, current, onSelect, onAdd }: TimelineProps) {
   const stripRef = useRef<HTMLOListElement>(null)
   const last = doc.formations.length - 1
 
@@ -28,10 +23,8 @@ export function Timeline({ doc, current, time, total, playing, onSelect, onToggl
     <footer className="timeline">
       <div className="transport">
         <button className="btn icon" title="Previous formation (←)" disabled={current === 0} onClick={() => onSelect(current - 1)}><Icon name="prev" /></button>
-        <button className="btn icon primary" title={playing ? 'Pause (Space)' : 'Play (Space)'} onClick={onTogglePlay}><Icon name={playing ? 'pause' : 'play'} /></button>
         <button className="btn icon" title="Next formation (→)" disabled={current === last} onClick={() => onSelect(current + 1)}><Icon name="next" /></button>
-        <span className="clock">{clock(time)} / {clock(total)}</span>
-        <div className="progress"><div style={{ width: `${total > 0 ? (time / total) * 100 : 0}%` }} /></div>
+        <span className="position">Formation {current + 1} of {doc.formations.length}</span>
       </div>
       <ol className="strip" ref={stripRef}>
         {doc.formations.map((f, i) => (
@@ -39,7 +32,7 @@ export function Timeline({ doc, current, time, total, playing, onSelect, onToggl
             <button className={`card${i === current ? ' current' : ''}`} aria-current={i === current} onClick={() => onSelect(i)}>
               <Thumbnail formation={f} dancers={doc.dancers} stage={doc.stage} />
               <span className="card-title"><b>{i + 1}</b>{formationTitle(f, i)}</span>
-              <span className="card-meta">{f.hold}s hold{i < last && ` · ${f.transition}s move`}{f.notes.trim() && ' · notes'}</span>
+              <span className="card-meta">{f.notes.trim() ? 'Has notes' : '\u00a0'}</span>
             </button>
           </li>
         ))}

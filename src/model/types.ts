@@ -23,10 +23,6 @@ export interface Formation {
   /** Optional; the UI falls back to "Formation N". */
   name: string
   positions: Positions
-  /** Seconds this formation is held during playback. */
-  hold: number
-  /** Seconds spent travelling from this formation into the next one during playback. */
-  transition: number
   notes: string
 }
 

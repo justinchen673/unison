@@ -18,18 +18,17 @@ type Gesture =
 interface StageProps {
   doc: Choreography
   current: number
-  /** What to draw right now; differs from the current formation while gliding or playing. */
+  /** What to draw right now; differs from the current formation while gliding into it. */
   positions: Positions
   selection: string[]
   view: ViewOptions
   moving: boolean
-  playing: boolean
   onEditStart: () => void
 }
 
 const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i)
 
-export function Stage({ doc, current, positions, selection, view, moving, playing, onEditStart }: StageProps) {
+export function Stage({ doc, current, positions, selection, view, moving, onEditStart }: StageProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const gestureRef = useRef<Gesture | null>(null)
   const [gesture, setGesture] = useState<Gesture | null>(null)
@@ -51,7 +50,7 @@ export function Stage({ doc, current, positions, selection, view, moving, playin
   }
 
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
-    if (playing || e.button !== 0) return
+    if (e.button !== 0) return
     onEditStart()
     const p = toStage(e)
     const id = (e.target as Element).closest('[data-dancer]')?.getAttribute('data-dancer')
@@ -110,7 +109,7 @@ export function Stage({ doc, current, positions, selection, view, moving, playin
   return (
     <svg
       ref={svgRef}
-      className={`stage${gesture?.kind === 'drag' ? ' dragging' : ''}${playing ? ' playing' : ''}`}
+      className={`stage${gesture?.kind === 'drag' ? ' dragging' : ''}`}
       viewBox={`${(-outer - 0.3) * U} ${(-D / 2 - 1.1) * U} ${(2 * outer + 0.6) * U} ${(D + 2.9) * U}`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => updateGesture(null)}
       onContextMenu={(e) => e.preventDefault()}

@@ -324,10 +324,6 @@ textarea {
   cursor: grabbing;
 }
 
-.stage.playing .dancer {
-  cursor: default;
-}
-
 .dancer .body {
   stroke: rgba(0, 0, 0, 0.35);
   stroke-width: 1.5;
@@ -404,24 +400,9 @@ textarea {
   gap: 6px;
 }
 
-.clock {
-  min-width: 112px;
+.position {
   margin: 0 8px;
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.progress {
-  flex: 1;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--panel-2);
-}
-
-.progress > div {
-  height: 100%;
-  background: var(--accent);
 }
 
 .strip {

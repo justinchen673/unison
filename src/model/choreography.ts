@@ -14,7 +14,7 @@ export function createDancer(index: number): Dancer {
 }
 
 export function createFormation(name: string, positions: Positions): Formation {
-  return { id: uid(), name, positions, hold: 2, transition: 1.5, notes: '' }
+  return { id: uid(), name, positions, notes: '' }
 }
 
 /** Centered rows of dancers: 2 units apart when they fit across the stage, otherwise 1 unit apart. */
@@ -37,13 +37,13 @@ export function createChoreography(dancerCount: number): Choreography {
   return { format: 'unison', version: 1, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
 }
 
-/** Sample piece shown on first launch so there is something to play right away. */
+/** Sample project with named dancers and several formations, used by unit tests (the app never loads it). */
 export function createDemo(): Choreography {
   const base = createChoreography(6)
   const dancers = base.dancers.map((d, i) => ({ ...d, name: ['Ava', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fay'][i], label: 'ABCDEF'[i] }))
   const at = (points: [number, number][]) => byDancer(dancers, points.map(([x, y]) => ({ x, y })))
   const opening = createFormation('Opening line', at([[-5, 0], [-3, 0], [-1, 0], [1, 0], [3, 0], [5, 0]]))
-  opening.notes = 'Welcome to Unison! Drag dancers to move them, Shift+click or drag a box to select several, and press Space to play.'
+  opening.notes = 'Welcome to Unison! Drag dancers to move them, Shift+click or drag a box to select several, and use ← → to step through formations.'
   return {
     ...base,
     name: 'Demo piece',
@@ -65,7 +65,7 @@ export function setPositions(doc: Choreography, index: number, updates: Position
   return withFormation(doc, index, (f) => ({ ...f, positions: { ...f.positions, ...updates } }))
 }
 
-export function updateFormation(doc: Choreography, index: number, patch: Partial<Pick<Formation, 'name' | 'hold' | 'transition' | 'notes'>>): Choreography {
+export function updateFormation(doc: Choreography, index: number, patch: Partial<Pick<Formation, 'name' | 'notes'>>): Choreography {
   return withFormation(doc, index, (f) => ({ ...f, ...patch }))
 }
 

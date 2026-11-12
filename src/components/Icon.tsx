@@ -1,6 +1,4 @@
 const PATHS = {
-  play: 'M8 5v14l11-7z',
-  pause: 'M6 5h4v14H6zM14 5h4v14h-4z',
   prev: 'M6 5h2v14H6zM19 5v14L9 12z',
   next: 'M16 5h2v14h-2zM5 5v14l10-7z',
   plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',

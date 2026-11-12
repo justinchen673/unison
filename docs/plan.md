@@ -35,7 +35,7 @@ The complete, always-current architecture lives in [architecture.md](architectur
 
 ## Prototype scope (v0.1, done)
 
-Stage with grid, wings, and numbers · add, remove, and style dancers · drag with snapping, multi-select, and keyboard nudge · add, duplicate, delete, reorder, name, and annotate formations · animated glide and full playback · previous and next ghosts with paths · undo/redo · autosave · save and open files.
+Stage with grid, wings, and numbers · add, remove, and style dancers · drag with snapping, multi-select, and keyboard nudge · add, duplicate, delete, reorder, name, and annotate formations · animated glide between formations · previous and next ghosts with paths · undo/redo · autosave · save and open files. (Formation durations and full playback were in the first prototype but were removed: for now Unison has no notion of time.)
 
 Verified with unit tests (timeline sampling, drag snapping and limits, file parsing, edits) and an end-to-end run of the built `dist/index.html` over `file://` in Microsoft Edge.
 

@@ -33,19 +33,11 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
 
   return (
     <aside className="inspector">
-      <section key={formation.id}>
+      <section>
         <h2>Formation {current + 1} <span className="muted">of {doc.formations.length}</span></h2>
         <Field label="Name">
           <input value={formation.name} placeholder={formationTitle(formation, current)} onChange={(e) => setFormation({ name: e.target.value }, 'name')} />
         </Field>
-        <div className="row">
-          <Field label="Hold (sec)">
-            <NumberField value={formation.hold} min={0} max={600} step={0.5} onChange={(hold) => setFormation({ hold }, 'hold')} />
-          </Field>
-          <Field label="Move to next (sec)">
-            <NumberField value={formation.transition} min={0} max={600} step={0.5} onChange={(transition) => setFormation({ transition }, 'transition')} />
-          </Field>
-        </div>
         <Field label="Notes">
           <textarea rows={3} value={formation.notes} placeholder="Counts, cues, reminders…" onChange={(e) => setFormation({ notes: e.target.value }, 'notes')} />
         </Field>
@@ -122,7 +114,6 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
         <details>
           <summary>Keyboard shortcuts</summary>
           <dl className="shortcuts">
-            <dt>Space</dt><dd>Play / pause</dd>
             <dt>← →</dt><dd>Previous / next formation</dd>
             <dt>Arrow keys</dt><dd>Nudge selected dancers ½ m (Shift: 1 m)</dd>
             <dt>Shift+click or drag a box</dt><dd>Select several dancers</dd>

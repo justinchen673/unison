@@ -52,23 +52,23 @@ src/
     types.ts             Data types (Choreography, Dancer, Formation, Point, Positions, StageSize)
     stage.ts             Stage geometry: snapping, clamping, offstage test, group drag math
     choreography.ts      Factories (new project, sample project for tests) and pure edit functions
-    timeline.ts          Playback timing: formation start times, total length, sampling/interpolation
+    interpolate.ts       Glide math: easing and blending positions between two formations
     file.ts              Save-file serialize/parse with validation and repair
     *.test.ts            Vitest unit tests, next to the code they test
   state/                 App state and side effects
     store.ts             Global editor store: open project (or none), selection, view options, undo/redo
     persistence.ts       Autosave (localStorage), New/Open/Save/Save as of .unison project files, unsaved-changes guard
     fileHandles.ts       Save in place (Edge/Chrome): file pickers, write with permission, remember the linked file in IndexedDB
-    useMotion.ts         Hook: glide between formations and full playback (requestAnimationFrame)
+    useMotion.ts         Hook: short glide between formations (requestAnimationFrame)
     store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking)
   components/            React UI
     Welcome.tsx          Start screen while no project is open: New project / Open project…
     TopBar.tsx           App name, project name, undo/redo, New/Open/Save
     Stage.tsx            SVG stage: grid, wings, dancers, ghosts/paths, drag and box select
-    Timeline.tsx         Transport (prev/play/next, clock, progress) + formation strip with thumbnails
+    Timeline.tsx         Formation navigation (prev/next, "Formation N of M") + formation strip with thumbnails
     Inspector.tsx        Right panel: formation, selected dancers, dancer list, stage and view options, shortcuts
     Icon.tsx             Inline SVG icons (<Icon name=…>) and the logo
-    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, clock format, selection toggle
+    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, selection toggle
 ```
 
 ## 3. Screen layout
@@ -93,7 +93,7 @@ With a project open, `App` renders the editor as a CSS grid (`.app` in `index.cs
 Choreography { format: 'unison'; version: 1; name; stage: StageSize; dancers: Dancer[]; formations: Formation[] }
 StageSize    { width; depth }                 // meters, performance area only (wings are extra)
 Dancer       { id; name; label; color }       // label = 1–3 chars drawn in the marker; color = #rrggbb
-Formation    { id; name; positions: Positions; hold; transition; notes }
+Formation    { id; name; positions: Positions; notes }
 Positions    = Record<dancerId, Point>
 Point        { x; y }
 ```
@@ -112,7 +112,7 @@ Point        { x; y }
 - Dancer names, labels and colors are **per piece**, not per formation.
 - There's always **at least one** formation.
 - Formation `name` may be empty; the UI shows `Formation N` instead (`formationTitle`).
-- `hold` = seconds the formation is held; `transition` = seconds spent moving from it into the next. The **last formation's transition is never played**.
+- **No time.** A piece is just an ordered list of formations; there are no hold durations, transition durations, playback or music (yet). Older files that stored `hold`/`transition` still open; the fields are dropped.
 - Ids come from `uid()` (16 hex chars from `crypto.getRandomValues`). Don't use `crypto.randomUUID`; some browsers don't expose it on `file://`.
 
 ## 5. Model layer (`src/model/`)
@@ -138,12 +138,12 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `PALETTE` | 12 default dancer colors, assigned round-robin. |
 | `uid()` | Random id (see invariants). |
 | `formationTitle(f, i)` | Display name with the `Formation N` fallback. |
-| `createDancer(i)`, `createFormation(name, positions)` | Factories. New formations default to `hold: 2`, `transition: 1.5`. |
+| `createDancer(i)`, `createFormation(name, positions)` | Factories. |
 | `lineUp(count, stage)` | Starting positions: centered rows, 2 m apart if they fit across the stage, else 1 m. |
 | `createChoreography(n)` | New project: 12 × 8 m stage, `n` dancers lined up, one formation. |
 | `createDemo()` | Sample project (6 named dancers Ava…Fay, 4 formations: line, V, circle, exit to wings). Used by unit tests; the app never loads it. |
 | `setPositions(doc, i, updates)` | Merge position updates into formation `i`. |
-| `updateFormation(doc, i, patch)` | Patch `name`, `hold`, `transition`, `notes`. |
+| `updateFormation(doc, i, patch)` | Patch `name`, `notes`. |
 | `updateDancers(doc, ids, patch)` | Patch `name`, `label`, `color` on several dancers. |
 | `addDancer(doc, i)` | Adds a dancer at the free grid spot nearest center stage (at least 1.5 m from everyone in formation `i`), at that **same spot in every formation**. Returns `{ doc, id }`. |
 | `removeDancers(doc, ids)` | Removes dancers and their positions everywhere. |
@@ -151,26 +151,19 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `removeFormation(doc, i)` | No-op when only one formation is left. |
 | `moveFormation(doc, from, to)` | Reorder; no-op when `to` is out of range. |
 
-### `timeline.ts`
+### `interpolate.ts`
 
-Playback time `t` (seconds) runs through each formation as *hold* then *transition*:
-
-```text
-| F1 hold | F1→F2 move | F2 hold | F2→F3 move | … | Fn hold |
-```
+Used only for the short glide between formations. There's deliberately **no concept of time** in the model: formations are an ordered list of snapshots with no hold or transition durations.
 
 | Export | Purpose |
 | --- | --- |
 | `ease(t)` | Cosine ease-in-out on `[0, 1]`. |
 | `interpolate(from, to, t)` | Per-dancer linear blend (dancers missing from `from` stay at their `to` position). |
-| `formationStarts(doc)` | Start time of each formation. |
-| `totalDuration(doc)` | Start of the last formation + its hold. |
-| `sampleAt(doc, time)` | `{ index, transition, positions }`: the held or departing formation, transition progress (`null` while holding) and eased positions. Clamps to the last formation after the end. |
 
 ### `file.ts`
 
 - `serialize(doc)`: pretty-printed JSON of the `Choreography` object, as is.
-- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or `version !== 1`. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 2–60 (default 12 × 8); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; invalid `hold`/`transition` fall back to 2 / 1.5; an empty formation list gets one lined-up formation.
+- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or `version !== 1`. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 2–60 (default 12 × 8); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; `hold`/`transition` fields from older files (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation.
 
 ## 6. State layer (`src/state/`)
 
@@ -226,14 +219,12 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 
 ### `useMotion.ts`: what the stage shows
 
-`useMotion(doc, current)` returns the positions to draw plus transport controls. Internal state is one `Motion` or `null`:
+`useMotion(doc, current)` returns the positions to draw. Internal state is one `Glide` or `null`:
 
-- `glide` (`goTo(i)`): 450 ms eased move from whatever is on screen to formation `i`; also sets `current`.
-- `play` (`play()`): starts at the current formation's start time (or at 0 when on the last formation). Each animation frame samples the timeline with `sampleAt`, sets `current` to the sampled index (so the strip and inspector follow along) and stops at the end. It always reads the latest doc from the store.
-- `pause()`: stops playback and glides to the nearest formation (the next one if the transition was at least half done).
-- `stop()`: drops any motion immediately (used when the user starts editing, or before New/Open).
+- `goTo(i)`: sets `current` to formation `i` and starts a 450 ms eased glide (`requestAnimationFrame`) from whatever is on screen (even mid-glide) to that formation. This is a fixed-speed preview, not a timing setting.
+- `stop()`: drops any glide immediately (used when the user starts editing, or before New/Open).
 
-Returned values: `positions`, `time` (playhead; the current formation's start time when not playing), `total`, `playing`, `moving` (any motion active), and the controls above.
+Returned values: `positions`, `moving` (a glide is running), `goTo`, `stop`.
 
 ## 7. UI layer
 
@@ -261,8 +252,7 @@ flowchart LR
 | Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, Ctrl+Y | Undo / redo | Handled even while typing in a field (replaces the browser's text undo). |
 | Ctrl/⌘+S, Ctrl/⌘+Shift+S, Ctrl/⌘+O | Save / Save as / Open | Also handled while typing. |
 | Ctrl/⌘+A | Select all dancers | Ignored while typing (normal text select-all). |
-| Space | Play / pause | Ignored when focus is on a button (so Space still clicks it). |
-| Esc | Pause and clear selection | |
+| Esc | Clear selection | |
 | Delete / Backspace | Remove selected dancers | |
 | Arrows | With a selection: nudge 0.5 m (Shift: 1 m), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
 
@@ -274,7 +264,7 @@ All shortcuts except undo/redo/save/open are ignored while focus is in an `input
 - Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, 1 m grid (center lines dashed), floor border, front-edge distance numbers, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
 - **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed.
 - **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and a path line trimmed to the marker edges. Guides are hidden while anything is moving.
-- **Pointer gestures** (pointer capture on the SVG; ignored during playback). Any pointer down first calls `onEditStart` (stops glides). Then:
+- **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (stops glides). Then:
   - Shift/Ctrl/⌘+click a dancer toggles it in the selection.
   - Pressing a dancer starts a **drag** of the selection (or just that dancer if it isn't selected). While dragging, positions are previewed locally with `dragOffset`; on release the move is committed once (if it moved more than 0.05 m).
   - Pressing empty space starts a **box select** (added to the current selection when a modifier key is held); dancers inside the box (using the positions on screen) are selected live.
@@ -282,13 +272,13 @@ All shortcuts except undo/redo/save/open are ignored while focus is in an `input
 
 ### `Timeline.tsx`
 
-Transport row (previous, play/pause, next, `m:ss.s` clock, progress bar) and a horizontally scrolling strip of formation cards. Each card shows a memoized SVG `Thumbnail`, number, title and timing; the current card scrolls into view. The last item is the "+ Formation" card.
+Navigation row (previous and next formation buttons, "Formation N of M") and a horizontally scrolling strip of formation cards. Each card shows a memoized SVG `Thumbnail`, number, title and a "Has notes" marker; the current card scrolls into view. The last item is the "+ Formation" card.
 
 ### `Inspector.tsx`
 
 Sections, top to bottom:
 
-1. **Formation** (re-mounted per formation via `key` so number drafts reset): name, hold, move-to-next, notes, move earlier/later, Duplicate, Delete.
+1. **Formation:** name, notes, move earlier/later, Duplicate, Delete.
 2. **Selected dancer(s)** (only with a selection): name and label (single selection only), palette swatches and a custom color input, remove.
 3. **Dancers** list (click to select, modifier-click to toggle) and **Add dancer** (adds near center of the current formation and selects them).
 4. **Stage & view:** width/depth (2–60 m, whole meters) and the four view toggles.
@@ -300,8 +290,8 @@ Sections, top to bottom:
 
 - `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
 - `TopBar`: logo and name, editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open…, Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
-- `Icon`: inline SVG paths (`play`, `pause`, `prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`) rendered with class `glyph`; `Logo` for the brand mark.
-- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `clock(seconds)`; `toggleId(ids, id)`.
+- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`) rendered with class `glyph`; `Logo` for the brand mark.
+- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`.
 
 ### Styling (`index.css`)
 
@@ -319,12 +309,12 @@ A project file (`<name>.unison`) contains `serialize(doc)`, which is plain JSON:
   "stage": { "width": 12, "depth": 8 },
   "dancers": [{ "id": "3f9c…", "name": "Ava", "label": "A", "color": "#f87171" }],
   "formations": [
-    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -5, "y": 0 } }, "hold": 2, "transition": 1.5, "notes": "" }
+    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -5, "y": 0 } }, "notes": "" }
   ]
 }
 ```
 
-The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON is stored in `localStorage` for autosave. **Any change to this shape must bump `version`** and teach `parseChoreography` to read (migrate) older versions, so existing files and autosaves keep opening.
+The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON is stored in `localStorage` for autosave. **Any change that this parser couldn't read correctly from an older file (new required fields, renamed fields, changed meaning) must bump `version`** and teach `parseChoreography` to migrate older versions, so existing files and autosaves keep opening. Removing a field that the parser simply ignores in older files (as with the old `hold`/`transition` times) doesn't need a bump.
 
 ## 9. Hard constraints
 
@@ -352,7 +342,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: timeline sampling, drag snapping/clamping, file round-trip/repair/rejection, formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking. |
+| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including dropping old timing fields), formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |
@@ -361,4 +351,4 @@ There's no automated UI test suite yet. UI changes should be checked by opening 
 
 ## 12. Not implemented yet
 
-The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, music and count-based timing, curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are meters only.
+The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, any notion of time (formation durations, playback, music, counts), curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are meters only.

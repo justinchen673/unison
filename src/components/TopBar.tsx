@@ -6,7 +6,7 @@ import { shortcut } from './ui.ts'
 
 interface TopBarProps {
   state: OpenState
-  /** Called before the open project is replaced (New / Open) so playback can stop. */
+  /** Called before the open project is replaced (New / Open) so a glide in progress can stop. */
   onBeforeReplace: () => void
 }
 

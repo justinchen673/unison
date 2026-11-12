@@ -20,8 +20,8 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 
 - **Stage** with a 1 m grid, center lines, numbered front edge, upstage/audience labels, and offstage wings (dancers in the wings are dimmed).
 - **Dancers**: add, remove, rename, set a 1–3 character label and a color. Drag to move (snaps to a ½ m grid; turn snapping off for free placement). Shift/Ctrl/⌘+click or drag a box to select several dancers and move them together.
-- **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes. Each formation has a hold time and a move-to-next time.
-- **Playback**: dancers glide when you switch formations, and **Play** runs the whole piece with eased transitions.
+- **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes. There's no timing: a piece is just its sequence of formations.
+- **Moving between formations**: click a formation or use ←/→, and the dancers glide to their new spots so you can see who moves where.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
 - **Undo/redo** for every change (each opened project starts with a fresh history).
 
@@ -29,7 +29,6 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 
 | Keys | Action |
 | --- | --- |
-| Space | Play / pause |
 | ← / → | Previous / next formation (when no dancer is selected) |
 | Arrow keys | Nudge selected dancers ½ m (Shift: 1 m) |
 | Shift+click, or drag a box | Select several dancers |
@@ -37,7 +36,7 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 | Delete / Backspace | Remove selected dancers from the piece |
 | Ctrl/⌘+Z, Ctrl/⌘+Shift+Z (or Ctrl+Y) | Undo, redo |
 | Ctrl/⌘+S, Ctrl/⌘+Shift+S, Ctrl/⌘+O | Save, save as a new file (Edge/Chrome), open a file |
-| Esc | Clear selection / pause |
+| Esc | Clear selection |
 
 ## Developing
 
@@ -57,7 +56,7 @@ npm run build    # type-check, then write the single-file app to dist/index.html
 ```text
 src/
   model/        Pure data and logic (no React): types, choreography edits, timeline sampling, file parsing
-  state/        Editor store with undo/redo, playback/glide hook, autosave and file save/open
+  state/        Editor store with undo/redo, glide between formations, autosave and file save/open
   components/   React UI: Stage (SVG), Timeline, Inspector, TopBar
 scripts/        Repo tooling (check-private.mjs: scan for personal or private info)
 docs/           Architecture, ArrangeUs research, tech plan and roadmap

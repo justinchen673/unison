@@ -7,7 +7,7 @@ export function Welcome() {
     <main className="welcome">
       <div className="welcome-card">
         <h1><Logo />Unison</h1>
-        <p>Plan formations for your dance team: place dancers, build formations, and play the transitions.</p>
+        <p>Plan formations for your dance team: place dancers, build formations, and see how everyone moves between them.</p>
         <div className="welcome-actions">
           <button className="btn primary" onClick={newPiece}>New project</button>
           <button className="btn" onClick={() => void openPiece()}>Open project…</button>

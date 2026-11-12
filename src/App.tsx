@@ -65,19 +65,14 @@ function Editor({ state }: { state: OpenState }) {
     if (mod || e.altKey) return
 
     const arrow = ARROWS.get(e.key)
-    if (e.key === ' ' && !target?.closest('button')) {
-      e.preventDefault()
-      if (motion.playing) motion.pause()
-      else motion.play()
-    } else if (e.key === 'Escape') {
-      if (motion.playing) motion.pause()
+    if (e.key === 'Escape') {
       editor.select([])
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.length) {
       e.preventDefault()
       editor.commit((d) => removeDancers(d, selection))
     } else if (arrow) {
       e.preventDefault()
-      if (selection.length && !motion.playing) nudge(arrow, e.shiftKey ? 1 : SNAP_STEP)
+      if (selection.length) nudge(arrow, e.shiftKey ? 1 : SNAP_STEP)
       else if (arrow[0]) motion.goTo(current + arrow[0])
     }
   })
@@ -92,11 +87,10 @@ function Editor({ state }: { state: OpenState }) {
     <div className="app">
       <TopBar state={state} onBeforeReplace={motion.stop} />
       <main className="stage-wrap">
-        <Stage doc={doc} current={current} positions={motion.positions} selection={selection} view={view} moving={motion.moving} playing={motion.playing} onEditStart={motion.stop} />
+        <Stage doc={doc} current={current} positions={motion.positions} selection={selection} view={view} moving={motion.moving} onEditStart={motion.stop} />
       </main>
       <Inspector state={state} onAddFormation={addFormation} />
-      <Timeline doc={doc} current={current} time={motion.time} total={motion.total} playing={motion.playing}
-        onSelect={motion.goTo} onTogglePlay={motion.playing ? motion.pause : motion.play} onAdd={addFormation} />
+      <Timeline doc={doc} current={current} onSelect={motion.goTo} onAdd={addFormation} />
     </div>
   )
 }

@@ -21,4 +21,12 @@ describe('parseChoreography', () => {
     expect(doc.dancers[1]).toMatchObject({ name: 'Dancer 2', label: '2' })
     expect(doc.formations[1].positions).toEqual({ a: { x: 0, y: 0 }, b: { x: 3, y: 0 } })
   })
+
+  it('drops the hold and transition times that earlier files stored', () => {
+    const doc = parseChoreography(JSON.stringify({
+      format: 'unison', version: 1, dancers: [{ id: 'a' }],
+      formations: [{ id: 'f', name: 'Start', positions: { a: { x: 1, y: 2 } }, hold: 2, transition: 1.5, notes: '' }],
+    }))
+    expect(doc.formations[0]).toEqual({ id: 'f', name: 'Start', positions: { a: { x: 1, y: 2 } }, notes: '' })
+  })
 })

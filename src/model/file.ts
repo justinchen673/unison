@@ -8,7 +8,6 @@ type Json = Record<string, unknown>
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isPoint = (v: unknown): v is Point => isObject(v) && Number.isFinite(v.x) && Number.isFinite(v.y)
 const text = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback)
-const seconds = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback)
 const size = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? clamp(Math.round(v), 2, 60) : fallback)
 const objects = (v: unknown) => (Array.isArray(v) ? v.filter(isObject) : [])
 
@@ -43,7 +42,7 @@ export function parseChoreography(json: string): Choreography {
       return [d.id, isPoint(p) ? { x: p.x, y: p.y } : (previous?.[d.id] ?? lined[i])]
     }))
     const id = typeof f.id === 'string' && !formations.some((x) => x.id === f.id) ? f.id : uid()
-    formations.push({ id, name: text(f.name, ''), positions, hold: seconds(f.hold, 2), transition: seconds(f.transition, 1.5), notes: text(f.notes, '') })
+    formations.push({ id, name: text(f.name, ''), positions, notes: text(f.notes, '') })
   }
   if (!formations.length) formations.push(createFormation('', Object.fromEntries(dancers.map((d, i) => [d.id, lined[i]]))))
 

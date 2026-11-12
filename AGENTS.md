@@ -4,7 +4,7 @@ Instructions for AI coding agents working on this repository.
 
 ## Project
 
-**Unison** is a free, offline dance formation planner for dance teams: place dancers on a stage, build a sequence of formations, and play back how everyone moves between them. It's a TypeScript + React app that Vite builds into **one self-contained HTML file** (`dist/index.html`), so anyone can run it by double-clicking the file in a browser on Windows or macOS, with nothing to install and no server. It's modeled on (and aims to improve on) the mobile app ArrangeUs.
+**Unison** is a free, offline dance formation planner for dance teams: place dancers on a stage, build a sequence of formations, and see how everyone moves between them. For now there's deliberately no notion of time (no durations, playback or music); a piece is just its formations. It's a TypeScript + React app that Vite builds into **one self-contained HTML file** (`dist/index.html`), so anyone can run it by double-clicking the file in a browser on Windows or macOS, with nothing to install and no server. It's modeled on (and aims to improve on) the mobile app ArrangeUs.
 
 ## NEVER add personal information. Always verify.
 
@@ -46,7 +46,7 @@ Also read [`README.md`](README.md) for user-facing behavior and commands. The co
 
 - add, remove, rename or move a file or module, or change what a module is responsible for;
 - add or change data types, invariants, the save-file format, store methods, view options or keyboard shortcuts;
-- change UI structure, gestures, playback behavior, build setup, dependencies, constraints or conventions;
+- change UI structure, gestures, the glide between formations, build setup, dependencies, constraints or conventions;
 - implement something listed under "Not implemented yet".
 
 Also keep the other docs in sync: tick off or adjust roadmap items in `docs/plan.md`, and update `README.md` when user-facing behavior or commands change. If you add a new doc, put it in `docs/` and link it from the list above.
@@ -68,7 +68,7 @@ Before finishing any code change, run `npm test`, `npm run lint`, `npm run check
 
 - All changes to the piece go through `editor.commit(...)` using pure functions from `src/model/`. Never mutate the document.
 - The built app must keep working from `file://`: no fetching local files, no service workers or lazy-loaded chunks, no `crypto.randomUUID`, and no File System Access API.
-- Changing the save-file shape requires bumping `version` and migrating older files in `parseChoreography`.
+- Changing the save-file shape in a way older files can't be read correctly requires bumping `version` and migrating older files in `parseChoreography` (details in docs/architecture.md §8).
 - Follow the existing code style: no semicolons, single quotes, compact one-line calls, explicit `.ts`/`.tsx` import extensions, `import type` for types, comments only where non-obvious.
 - Keep line endings LF (`.gitattributes`) and keep `package-lock.json` free of registry URLs (`.npmrc`).
 - Never add personal or employer information to the repo (see the section at the top), and always verify with `npm run check:private` plus a manual read-through.
