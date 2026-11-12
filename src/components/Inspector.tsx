@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, removeFormation, updateDancers, updateFormation } from '../model/choreography.ts'
-import { clamp } from '../model/stage.ts'
+import { MAX_GRID, MAX_STAGE, MIN_GRID, MIN_STAGE, clamp, gridSize, snapStep } from '../model/stage.ts'
 import type { StageSize } from '../model/types.ts'
 import { editor, type OpenState, type ViewOptions } from '../state/store.ts'
 import { supportsFileHandles } from '../state/fileHandles.ts'
@@ -97,13 +97,16 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
       <section>
         <h2>Stage &amp; view</h2>
         <div className="row">
-          <Field label="Width (m)">
-            <NumberField value={doc.stage.width} min={2} max={60} step={1} onChange={(width) => resize({ width: Math.round(width) }, 'stage-width')} />
+          <Field label="Width (ft)">
+            <NumberField value={doc.stage.width} min={MIN_STAGE} max={MAX_STAGE} step={1} onChange={(width) => resize({ width: Math.round(width) }, 'stage-width')} />
           </Field>
-          <Field label="Depth (m)">
-            <NumberField value={doc.stage.depth} min={2} max={60} step={1} onChange={(depth) => resize({ depth: Math.round(depth) }, 'stage-depth')} />
+          <Field label="Depth (ft)">
+            <NumberField value={doc.stage.depth} min={MIN_STAGE} max={MAX_STAGE} step={1} onChange={(depth) => resize({ depth: Math.round(depth) }, 'stage-depth')} />
           </Field>
         </div>
+        <Field label="Grid square size (ft)">
+          <NumberField value={doc.stage.grid} min={MIN_GRID} max={MAX_GRID} step={0.5} onChange={(grid) => resize({ grid: gridSize(grid) }, 'stage-grid')} />
+        </Field>
         <Toggle view={view} option="snap">Snap to grid</Toggle>
         <Toggle view={view} option="names">Show names</Toggle>
         <Toggle view={view} option="prevPaths">Show where dancers come from</Toggle>
@@ -115,7 +118,7 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
           <summary>Keyboard shortcuts</summary>
           <dl className="shortcuts">
             <dt>← →</dt><dd>Previous / next formation</dd>
-            <dt>Arrow keys</dt><dd>Nudge selected dancers ½ m (Shift: 1 m)</dd>
+            <dt>Arrow keys</dt><dd>Nudge selected dancers half a square, {snapStep(doc.stage)} ft (Shift: a whole square, {doc.stage.grid} ft)</dd>
             <dt>Shift+click or drag a box</dt><dd>Select several dancers</dd>
             <dt>{shortcut('Mod+A')}</dt><dd>Select all dancers</dd>
             <dt>Delete</dt><dd>Remove selected dancers</dd>

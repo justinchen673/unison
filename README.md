@@ -19,8 +19,8 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 
 ### What the prototype does
 
-- **Stage** with a 1 m grid, center lines, numbered front edge, upstage/audience labels, and offstage wings (dancers in the wings are dimmed).
-- **Dancers**: add, remove, rename, set a 1–3 character label and a color. Drag to move (snaps to a ½ m grid; turn snapping off for free placement). Shift/Ctrl/⌘+click or drag a box to select several dancers and move them together.
+- **Stage** in feet (default 40 × 24 ft) with 6 ft offstage wings (dancers in the wings are dimmed), center lines, upstage/audience labels, and a grid whose **square size you choose** (default 2 ft; under Stage & view). Stage numbers along the front edge follow the grid.
+- **Dancers**: add, remove, rename, set a 1–3 character label and a color. Drag to move (snaps to grid lines and square centers; turn snapping off for free placement). Shift/Ctrl/⌘+click or drag a box to select several dancers and move them together.
 - **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes. There's no timing: a piece is just its sequence of formations.
 - **Moving between formations**: click a formation or use ←/→, and the dancers glide to their new spots so you can see who moves where.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
@@ -31,7 +31,7 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 | Keys | Action |
 | --- | --- |
 | ← / → | Previous / next formation (when no dancer is selected) |
-| Arrow keys | Nudge selected dancers ½ m (Shift: 1 m) |
+| Arrow keys | Nudge selected dancers half a grid square (Shift: a whole square) |
 | Shift+click, or drag a box | Select several dancers |
 | Ctrl/⌘+A | Select all dancers |
 | Delete / Backspace | Remove selected dancers from the piece |
@@ -65,6 +65,6 @@ docs/           Architecture, ArrangeUs research, tech plan and roadmap
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture. AI agents should start with [AGENTS.md](AGENTS.md).
 
-- Stage coordinates are meters from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
-- Saved files are versioned JSON (`"format": "unison", "version": 1`), so future versions can migrate old files.
+- Stage coordinates are feet from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
+- Saved files are versioned JSON (`"format": "unison", "version": 2`); older versions are migrated when opened (version 1 used meters).
 - All document changes go through `editor.commit(...)` in `src/state/store.ts`, which is what makes them undoable.

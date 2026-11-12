@@ -1,3 +1,4 @@
+import { DEFAULT_STAGE, gridLines } from './stage.ts'
 import type { Choreography, Dancer, Formation, Point, Positions, StageSize } from './types.ts'
 
 export const PALETTE = ['#f87171', '#fb923c', '#facc15', '#a3e635', '#34d399', '#22d3ee', '#60a5fa', '#818cf8', '#c084fc', '#f472b6', '#e2e8f0', '#a8a29e']
@@ -17,9 +18,9 @@ export function createFormation(name: string, positions: Positions): Formation {
   return { id: uid(), name, positions, notes: '' }
 }
 
-/** Centered rows of dancers: 2 units apart when they fit across the stage, otherwise 1 unit apart. */
+/** Centered rows of dancers, as spread out as fits across the stage: 6 or 4 ft apart, else 2 ft apart in rows. */
 export function lineUp(count: number, stage: StageSize): Point[] {
-  const spacing = count <= Math.floor(stage.width / 2) + 1 ? 2 : 1
+  const spacing = [6, 4].find((s) => (count - 1) * s <= stage.width) ?? 2
   const perRow = Math.max(1, Math.min(count, Math.floor(stage.width / spacing) + 1))
   const rows = Math.ceil(count / perRow)
   return Array.from({ length: count }, (_, i) => {
@@ -32,9 +33,9 @@ export function lineUp(count: number, stage: StageSize): Point[] {
 const byDancer = (dancers: Dancer[], points: Point[]): Positions => Object.fromEntries(dancers.map((d, i) => [d.id, points[i]]))
 
 export function createChoreography(dancerCount: number): Choreography {
-  const stage = { width: 12, depth: 8 }
+  const stage = { ...DEFAULT_STAGE }
   const dancers = Array.from({ length: dancerCount }, (_, i) => createDancer(i))
-  return { format: 'unison', version: 1, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
+  return { format: 'unison', version: 2, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
 }
 
 /** Sample project with named dancers and several formations, used by unit tests (the app never loads it). */
@@ -42,7 +43,7 @@ export function createDemo(): Choreography {
   const base = createChoreography(6)
   const dancers = base.dancers.map((d, i) => ({ ...d, name: ['Ava', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fay'][i], label: 'ABCDEF'[i] }))
   const at = (points: [number, number][]) => byDancer(dancers, points.map(([x, y]) => ({ x, y })))
-  const opening = createFormation('Opening line', at([[-5, 0], [-3, 0], [-1, 0], [1, 0], [3, 0], [5, 0]]))
+  const opening = createFormation('Opening line', at([[-15, 0], [-9, 0], [-3, 0], [3, 0], [9, 0], [15, 0]]))
   opening.notes = 'Welcome to Unison! Drag dancers to move them, Shift+click or drag a box to select several, and use ← → to step through formations.'
   return {
     ...base,
@@ -50,9 +51,9 @@ export function createDemo(): Choreography {
     dancers,
     formations: [
       opening,
-      createFormation('V', at([[-5, -2], [-3, -0.5], [-1, 1], [1, 1], [3, -0.5], [5, -2]])),
-      createFormation('Circle', at([[-1.25, -2.17], [-2.5, 0], [-1.25, 2.17], [1.25, 2.17], [2.5, 0], [1.25, -2.17]])),
-      createFormation('Exit to wings', at([[-7, -2], [-7, 0], [-7, 2], [7, 2], [7, 0], [7, -2]])),
+      createFormation('V', at([[-15, -6], [-9, -2], [-3, 3], [3, 3], [9, -2], [15, -6]])),
+      createFormation('Circle', at([[-4, -7], [-8, 0], [-4, 7], [4, 7], [8, 0], [4, -7]])),
+      createFormation('Exit to wings', at([[-23, -6], [-23, 0], [-23, 6], [23, 6], [23, 0], [23, -6]])),
     ],
   }
 }
@@ -74,12 +75,9 @@ export function updateDancers(doc: Choreography, ids: string[], patch: Partial<O
 }
 
 function freeSpot(taken: Point[], stage: StageSize): Point {
-  const spots: Point[] = []
-  for (let y = -Math.floor(stage.depth / 2); y <= stage.depth / 2; y++) {
-    for (let x = -Math.floor(stage.width / 2); x <= stage.width / 2; x++) spots.push({ x, y })
-  }
+  const spots = gridLines(stage.depth / 2, stage.grid).flatMap((y) => gridLines(stage.width / 2, stage.grid).map((x) => ({ x, y })))
   spots.sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y))
-  return spots.find((s) => taken.every((p) => Math.hypot(p.x - s.x, p.y - s.y) >= 1.5)) ?? { x: 0, y: 0 }
+  return spots.find((s) => taken.every((p) => Math.hypot(p.x - s.x, p.y - s.y) >= 4)) ?? { x: 0, y: 0 }
 }
 
 /** Adds a dancer at the free grid spot nearest center stage in formation `index`, using that spot in every formation. */

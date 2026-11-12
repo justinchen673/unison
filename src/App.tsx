@@ -5,7 +5,7 @@ import { Timeline } from './components/Timeline.tsx'
 import { TopBar } from './components/TopBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
 import { duplicateFormation, removeDancers, setPositions } from './model/choreography.ts'
-import { SNAP_STEP, dragOffset, shift } from './model/stage.ts'
+import { dragOffset, shift, snapStep } from './model/stage.ts'
 import { openPiece, saveAsPiece, savePiece } from './state/persistence.ts'
 import { editor, isOpen, useEditor, type OpenState } from './state/store.ts'
 import { useMotion } from './state/useMotion.ts'
@@ -72,7 +72,7 @@ function Editor({ state }: { state: OpenState }) {
       editor.commit((d) => removeDancers(d, selection))
     } else if (arrow) {
       e.preventDefault()
-      if (selection.length) nudge(arrow, e.shiftKey ? 1 : SNAP_STEP)
+      if (selection.length) nudge(arrow, e.shiftKey ? doc.stage.grid : snapStep(doc.stage))
       else if (arrow[0]) motion.goTo(current + arrow[0])
     }
   })

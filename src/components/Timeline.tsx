@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import { formationTitle } from '../model/choreography.ts'
-import { WING } from '../model/stage.ts'
+import { DANCER_RADIUS, WING } from '../model/stage.ts'
 import type { Choreography, Dancer, Formation, StageSize } from '../model/types.ts'
 import { Icon } from './Icon.tsx'
 
@@ -44,14 +44,17 @@ export function Timeline({ doc, current, onSelect, onAdd }: TimelineProps) {
   )
 }
 
+/** Thumbnail SVG units per foot. */
+const T = 3
+
 const Thumbnail = memo(function Thumbnail({ formation, dancers, stage }: { formation: Formation; dancers: Dancer[]; stage: StageSize }) {
   const outer = stage.width / 2 + WING
   return (
-    <svg className="thumb" viewBox={`${-outer * 10} ${-stage.depth * 5} ${outer * 20} ${stage.depth * 10}`} aria-hidden="true">
-      <rect className="thumb-floor" x={-stage.width * 5} y={-stage.depth * 5} width={stage.width * 10} height={stage.depth * 10} />
+    <svg className="thumb" viewBox={`${-outer * T} ${(-stage.depth / 2) * T} ${2 * outer * T} ${stage.depth * T}`} aria-hidden="true">
+      <rect className="thumb-floor" x={(-stage.width / 2) * T} y={(-stage.depth / 2) * T} width={stage.width * T} height={stage.depth * T} />
       {dancers.map((d) => {
         const p = formation.positions[d.id]
-        return p ? <circle key={d.id} cx={p.x * 10} cy={p.y * 10} r={4.5} fill={d.color} /> : null
+        return p ? <circle key={d.id} cx={p.x * T} cy={p.y * T} r={DANCER_RADIUS * T * 1.4} fill={d.color} /> : null
       })}
     </svg>
   )

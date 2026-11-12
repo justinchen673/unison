@@ -49,7 +49,7 @@ Verified with unit tests (timeline sampling, drag snapping and limits, file pars
 - Formation presets (line, circle, V, stagger/window, block, diagonal) that **assign dancers to minimize total travel**.
 - Drag-reorder in the formation strip, and formation colors.
 - Curved transition paths.
-- Stage options: grid size, feet or meters, backstage depth, background image, and a "dancer's view" (flipped) toggle.
+- Stage options: a feet/meters switch, backstage depth, background image, and a "dancer's view" (flipped) toggle. (Grid square size is done.)
 
 ### Phase 2: music and counts (the big differentiator)
 
@@ -59,7 +59,7 @@ Verified with unit tests (timeline sampling, drag snapping and limits, file pars
 
 ### Phase 3: rehearsal outputs
 
-- PDF/print with a page per formation and its notes, plus **per-dancer sheets** ("Ava: F3 is 2 m stage left of center, 1 m upstage").
+- PDF/print with a page per formation and its notes, plus **per-dancer sheets** ("Ava: F3 is 6 ft stage left of center, 3 ft upstage").
 - PNG export of a formation, and video export of playback.
 - A read-only viewer mode to send to dancers.
 
@@ -72,7 +72,7 @@ Verified with unit tests (timeline sampling, drag snapping and limits, file pars
 
 ## Open questions
 
-- Meters or feet, and what stage-number convention your team uses (for example, numbers every 2 ft)?
+- Units are feet (decided) and the grid square size is adjustable. What stage-number convention does your team use (currently a number on each grid line, distance from center)?
 - Typical team size and stage dimensions, so the defaults can match?
 - Which browsers teammates use (Safari handles storage for `file://` pages differently)?
 - Should timing default to counts or seconds?

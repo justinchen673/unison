@@ -92,8 +92,8 @@ With a project open, `App` renders the editor as a CSS grid (`.app` in `index.cs
 ## 4. Data model (`src/model/types.ts`)
 
 ```ts
-Choreography { format: 'unison'; version: 1; name; stage: StageSize; dancers: Dancer[]; formations: Formation[] }
-StageSize    { width; depth }                 // meters, performance area only (wings are extra)
+Choreography { format: 'unison'; version: 2; name; stage: StageSize; dancers: Dancer[]; formations: Formation[] }
+StageSize    { width; depth; grid }           // feet; width/depth = performance area only (wings are extra); grid = side of each grid square
 Dancer       { id; name; label; color }       // label = 1–3 chars drawn in the marker; color = #rrggbb
 Formation    { id; name; positions: Positions; notes }
 Positions    = Record<dancerId, Point>
@@ -102,11 +102,11 @@ Point        { x; y }
 
 ### Coordinate system
 
-- Units are **meters**, origin at **center stage**.
+- Units are **feet**, origin at **center stage**. (Files before version 2 used meters and are converted when opened.)
 - **+x is the audience's right** (which is *stage left*); **+y is downstage**, toward the audience.
 - The performance area spans `x ∈ [-width/2, width/2]`, `y ∈ [-depth/2, depth/2]`.
-- Offstage **wings** (`WING = 2` m) extend each side, so dancers can be placed at `|x| ≤ width/2 + 2`. A dancer with `|x| > width/2` is offstage and is drawn dimmed. There's no upstage or downstage wing.
-- Positions are absolute meters, so resizing the stage doesn't move anyone. Dancers can end up outside a smaller stage; nothing clamps them until they're dragged.
+- Offstage **wings** (`WING = 6` ft) extend each side, so dancers can be placed at `|x| ≤ width/2 + 6`. A dancer with `|x| > width/2` is offstage and is drawn dimmed. There's no upstage or downstage wing.
+- Positions are absolute feet, so resizing the stage doesn't move anyone. Dancers can end up outside a smaller stage; nothing clamps them until they're dragged.
 
 ### Invariants
 
@@ -125,9 +125,13 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 
 | Export | Purpose |
 | --- | --- |
-| `SNAP_STEP = 0.5` | Snap grid in meters (grid lines and midpoints). Also the keyboard nudge step. |
-| `WING = 2` | Width of each side wing in meters. |
-| `DANCER_RADIUS = 0.32` | Marker radius in meters (used for drawing and for trimming path lines). |
+| `snapStep(stage)` | Half a grid square (`stage.grid / 2`): dancers snap to grid lines and square centers. Also the keyboard nudge step (Shift+arrow nudges a whole square). |
+| `gridSize(feet)` | Rounds a square size to the nearest half foot within `MIN_GRID`–`MAX_GRID` (1–20 ft). |
+| `WING = 6` | Width of each side wing in feet. |
+| `DANCER_RADIUS = 1` | Marker radius in feet (used for drawing and for trimming path lines). |
+| `DEFAULT_STAGE`, `MIN_STAGE`, `MAX_STAGE` | New-project stage (40 × 24 ft with 2 ft squares) and the allowed width/depth range (6–200 ft). |
+| `FEET_PER_METER` | Converts version 1 (meter) files when they're opened. |
+| `gridLines(half, step)` | Positions every `step` feet from center outward within `±half` (used for grid lines and `addDancer`'s candidate spots, with `step = stage.grid`). |
 | `clamp`, `snap`, `tidy` | Number helpers. `tidy` rounds to 3 decimals so saved files don't contain float noise. |
 | `isOffstage(p, stage)` | `|x| > width/2`. |
 | `shift(positions, ids, offset)` | New positions for `ids` moved by `offset` (tidied). |
@@ -141,13 +145,13 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `uid()` | Random id (see invariants). |
 | `formationTitle(f, i)` | Display name with the `Formation N` fallback. |
 | `createDancer(i)`, `createFormation(name, positions)` | Factories. |
-| `lineUp(count, stage)` | Starting positions: centered rows, 2 m apart if they fit across the stage, else 1 m. |
-| `createChoreography(n)` | New project: 12 × 8 m stage, `n` dancers lined up, one formation. |
+| `lineUp(count, stage)` | Starting positions: centered rows, 6 ft or 4 ft apart (whichever fits across the stage first), else 2 ft apart in several rows. Spacings are even so everyone lands on whole feet (on the snap grid for the default 2 ft squares). |
+| `createChoreography(n)` | New project: 40 × 24 ft stage, `n` dancers lined up, one formation. |
 | `createDemo()` | Sample project (6 named dancers Ava…Fay, 4 formations: line, V, circle, exit to wings). Used by unit tests; the app never loads it. |
 | `setPositions(doc, i, updates)` | Merge position updates into formation `i`. |
 | `updateFormation(doc, i, patch)` | Patch `name`, `notes`. |
 | `updateDancers(doc, ids, patch)` | Patch `name`, `label`, `color` on several dancers. |
-| `addDancer(doc, i)` | Adds a dancer at the free grid spot nearest center stage (at least 1.5 m from everyone in formation `i`), at that **same spot in every formation**. Returns `{ doc, id }`. |
+| `addDancer(doc, i)` | Adds a dancer at the free grid-line intersection nearest center stage (at least 4 ft from everyone in formation `i`), at that **same spot in every formation**. Returns `{ doc, id }`. |
 | `removeDancers(doc, ids)` | Removes dancers and their positions everywhere. |
 | `duplicateFormation(doc, i)` | Inserts a copy right after `i` (new id, empty name and notes). This is what "+ Formation" and "Duplicate" do. |
 | `removeFormation(doc, i)` | No-op when only one formation is left. |
@@ -165,7 +169,7 @@ Used only for the short glide between formations. There's deliberately **no conc
 ### `file.ts`
 
 - `serialize(doc)`: pretty-printed JSON of the `Choreography` object, as is.
-- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or `version !== 1`. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 2–60 (default 12 × 8); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; `hold`/`transition` fields from older files (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation.
+- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or a `version` other than 1 or 2. **Version 1 files were in meters**: their stage size and positions are multiplied by `FEET_PER_METER` (positions tidied to 3 decimals, stage sizes rounded to whole feet), and the result is version 2. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 6–200 ft (default 40 × 24); the grid square size goes through `gridSize` (default 2 ft when missing, e.g. in files from before the setting existed or version 1 files); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; `hold`/`transition` fields from older files (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation.
 
 ## 6. State layer (`src/state/`)
 
@@ -263,19 +267,19 @@ flowchart LR
 | Ctrl/⌘+A | Select all dancers | Ignored while typing (normal text select-all). |
 | Esc | Clear selection | |
 | Delete / Backspace | Remove selected dancers | |
-| Arrows | With a selection: nudge 0.5 m (Shift: 1 m), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
+| Arrows | With a selection: nudge half a grid square (Shift: a whole square), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
 
 All shortcuts except undo/redo/save/open are ignored while focus is in an `input`, `textarea`, `select` or `contenteditable` element.
 
 ### `Stage.tsx`
 
-- Draws in SVG user units with `U = 40` units per meter (large units keep text crisp and above browsers' minimum font sizes). The `viewBox` covers the stage, both wings and margins for labels; the SVG scales to fill its area.
-- Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, 1 m grid (center lines dashed), floor border, front-edge distance numbers, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
+- Draws in SVG user units with `U = 12` units per foot (large enough units keep text crisp and above browsers' minimum font sizes). The `viewBox` covers the stage, both wings and margins for labels; the SVG scales to fill its area. Label margins and offsets are fixed SVG units, not feet, so labels look the same on any stage size.
+- Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, grid lines every `stage.grid` feet (`gridLines`, center lines dashed), floor border, front-edge stage numbers (distance from center) on every grid line, or on every 2nd/3rd… line when squares are under 2 ft so numbers never sit closer than 2 ft apart, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
 - **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed.
 - **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and a path line trimmed to the marker edges. Guides are hidden while anything is moving.
 - **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (stops glides). Then:
   - Shift/Ctrl/⌘+click a dancer toggles it in the selection.
-  - Pressing a dancer starts a **drag** of the selection (or just that dancer if it isn't selected). While dragging, positions are previewed locally with `dragOffset`; on release the move is committed once (if it moved more than 0.05 m).
+  - Pressing a dancer starts a **drag** of the selection (or just that dancer if it isn't selected). While dragging, positions are previewed locally with `dragOffset`; on release the move is committed once (if it moved more than 0.15 ft).
   - Pressing empty space starts a **box select** (added to the current selection when a modifier key is held); dancers inside the box (using the positions on screen) are selected live.
   - The current gesture is kept in both a ref (read by handlers, always fresh) and state (for rendering).
 
@@ -290,7 +294,7 @@ Sections, top to bottom:
 1. **Formation:** name, notes, move earlier/later, Duplicate, Delete.
 2. **Selected dancer(s)** (only with a selection): name and label (single selection only), palette swatches and a custom color input, remove.
 3. **Dancers** list (click to select, modifier-click to toggle) and **Add dancer** (adds near center of the current formation and selects them).
-4. **Stage & view:** width/depth (2–60 m, whole meters) and the four view toggles.
+4. **Stage & view:** width/depth (6–200 ft, whole feet), **grid square size** (1–20 ft in half-foot steps, rounded by `gridSize`; one coalesced undo step per edit), and the four view toggles. The shortcut list shows the current nudge sizes.
 5. **Keyboard shortcuts** (collapsible).
 
 `NumberField` keeps the raw text while typing so a field can be cleared and retyped; it only commits valid, clamped numbers. Text and number edits use coalesce keys so each field edit is one undo step.
@@ -315,15 +319,17 @@ A project file (`<name>.unison`) contains `serialize(doc)`, which is plain JSON:
 ```json
 {
   "format": "unison",
-  "version": 1,
+  "version": 2,
   "name": "Spring show",
-  "stage": { "width": 12, "depth": 8 },
+  "stage": { "width": 40, "depth": 24, "grid": 2 },
   "dancers": [{ "id": "3f9c…", "name": "Ava", "label": "A", "color": "#f87171" }],
   "formations": [
-    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -5, "y": 0 } }, "notes": "" }
+    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -15, "y": 0 } }, "notes": "" }
   ]
 }
 ```
+
+All lengths are feet. Version history: **1** = meters (converted on open); **2** = feet (current). `stage.grid` was added within version 2 without a bump: files without it simply get the 2 ft default they were already using.
 
 The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON is stored in `localStorage` for autosave. **Any change that this parser couldn't read correctly from an older file (new required fields, renamed fields, changed meaning) must bump `version`** and teach `parseChoreography` to migrate older versions, so existing files and autosaves keep opening. Removing a field that the parser simply ignores in older files (as with the old `hold`/`transition` times) doesn't need a bump.
 
@@ -362,4 +368,4 @@ There's no automated UI test suite yet. UI changes should be checked by opening 
 
 ## 12. Not implemented yet
 
-The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, any notion of time (formation durations, playback, music, counts), curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are meters only.
+The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, any notion of time (formation durations, playback, music, counts), curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).

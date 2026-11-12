@@ -1,15 +1,17 @@
 import { useRef, useState, type PointerEvent } from 'react'
 import { setPositions } from '../model/choreography.ts'
-import { DANCER_RADIUS, WING, dragOffset, isOffstage, shift } from '../model/stage.ts'
+import { DANCER_RADIUS, WING, dragOffset, gridLines, isOffstage, shift } from '../model/stage.ts'
 import type { Choreography, Point, Positions } from '../model/types.ts'
 import { editor, type ViewOptions } from '../state/store.ts'
 import { inkFor, toggleId } from './ui.ts'
 
-/** SVG user units per stage unit. Drawing at this scale keeps text clear of browser minimum-font-size clamps. */
-const U = 40
+/** SVG user units per foot. Drawing at this scale keeps text clear of browser minimum-font-size clamps. */
+const U = 12
 const R = DANCER_RADIUS * U
 /** Label font size by character count. */
 const LABEL_SIZE = [15, 15, 12.5, 10]
+/** Moves shorter than this (feet) count as a click, not a drag. */
+const MIN_MOVE = 0.15
 
 type Gesture =
   | { kind: 'drag'; ids: string[]; anchor: string; start: Point; delta: Point }
@@ -25,8 +27,6 @@ interface StageProps {
   moving: boolean
   onEditStart: () => void
 }
-
-const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i)
 
 export function Stage({ doc, current, positions, selection, view, moving, onEditStart }: StageProps) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -89,7 +89,7 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
       const p = toStage(e)
       const delta = { x: p.x - g.start.x, y: p.y - g.start.y }
       const offset = dragOffset(formation.positions, g.ids, g.anchor, delta, doc.stage, view.snap)
-      if (Math.hypot(delta.x, delta.y) > 0.05 && (offset.x || offset.y)) {
+      if (Math.hypot(delta.x, delta.y) > MIN_MOVE && (offset.x || offset.y)) {
         editor.commit((d) => setPositions(d, current, shift(d.formations[current].positions, g.ids, offset)))
       }
     }
@@ -103,14 +103,18 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
   const prev = view.prevPaths ? doc.formations[current - 1]?.positions : undefined
   const next = view.nextPaths ? doc.formations[current + 1]?.positions : undefined
   const box = gesture?.kind === 'box' ? gesture : null
-  const xs = range(-Math.floor(W / 2), Math.floor(W / 2))
-  const ys = range(-Math.floor(D / 2), Math.floor(D / 2))
+  const xs = gridLines(W / 2, doc.stage.grid)
+  const ys = gridLines(D / 2, doc.stage.grid)
+  // Number every grid line, or every few lines when squares are small, so stage numbers stay at least 2 ft apart.
+  const labelEvery = Math.ceil(2 / doc.stage.grid - 1e-9)
+  const numbered = xs.filter((x) => Math.abs(Math.round(x / doc.stage.grid)) % labelEvery === 0)
 
+  // The viewBox margins and label offsets below are in SVG units, not feet, so labels keep their size on any stage.
   return (
     <svg
       ref={svgRef}
       className={`stage${gesture?.kind === 'drag' ? ' dragging' : ''}`}
-      viewBox={`${(-outer - 0.3) * U} ${(-D / 2 - 1.1) * U} ${(2 * outer + 0.6) * U} ${(D + 2.9) * U}`}
+      viewBox={`${-outer * U - 12} ${(-D / 2) * U - 44} ${2 * outer * U + 24} ${D * U + 116}`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => updateGesture(null)}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -122,9 +126,9 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
       {xs.map((x) => <line key={`x${x}`} className={x === 0 ? 'grid center' : 'grid'} x1={x * U} x2={x * U} y1={(-D / 2) * U} y2={(D / 2) * U} />)}
       {ys.map((y) => <line key={`y${y}`} className={y === 0 ? 'grid center' : 'grid'} x1={(-W / 2) * U} x2={(W / 2) * U} y1={y * U} y2={y * U} />)}
       <rect className="floor-edge" x={(-W / 2) * U} y={(-D / 2) * U} width={W * U} height={D * U} />
-      {xs.map((x) => <text key={`n${x}`} className="stage-number" x={x * U} y={(D / 2 + 0.45) * U}>{Math.abs(x)}</text>)}
-      <text className="edge-label" x={0} y={(-D / 2 - 0.55) * U}>UPSTAGE</text>
-      <text className="edge-label" x={0} y={(D / 2 + 1.25) * U}>AUDIENCE</text>
+      {numbered.map((x) => <text key={`n${x}`} className="stage-number" x={x * U} y={(D / 2) * U + 18}>{Math.abs(x)}</text>)}
+      <text className="edge-label" x={0} y={(-D / 2) * U - 22}>UPSTAGE</text>
+      <text className="edge-label" x={0} y={(D / 2) * U + 50}>AUDIENCE</text>
 
       {!moving && doc.dancers.map((d) => (
         <g key={d.id} className="guides" stroke={d.color}>
@@ -160,7 +164,7 @@ function Guide({ from, to, ghost, className }: { from: Point; to: Point; ghost: 
   const dx = to.x - from.x
   const dy = to.y - from.y
   const length = Math.hypot(dx, dy)
-  if (length < 0.05) return null
+  if (length < MIN_MOVE) return null
   const trim = DANCER_RADIUS / length
   return (
     <g className={className}>
