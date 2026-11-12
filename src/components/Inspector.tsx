@@ -3,6 +3,7 @@ import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, remov
 import { clamp } from '../model/stage.ts'
 import type { StageSize } from '../model/types.ts'
 import { editor, type OpenState, type ViewOptions } from '../state/store.ts'
+import { supportsFileHandles } from '../state/fileHandles.ts'
 import { Icon } from './Icon.tsx'
 import { inkFor, shortcut, toggleId } from './ui.ts'
 
@@ -128,7 +129,8 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
             <dt>{shortcut('Mod+A')}</dt><dd>Select all dancers</dd>
             <dt>Delete</dt><dd>Remove selected dancers</dd>
             <dt>{shortcut('Mod+Z')} / {shortcut('Mod+Shift+Z')}</dt><dd>Undo / redo</dd>
-            <dt>{shortcut('Mod+S')} / {shortcut('Mod+O')}</dt><dd>Save / open a file</dd>
+            <dt>{shortcut('Mod+S')} / {shortcut('Mod+O')}</dt><dd>Save / open a project file</dd>
+            {supportsFileHandles && <><dt>{shortcut('Mod+Shift+S')}</dt><dd>Save as a new file</dd></>}
           </dl>
         </details>
       </section>

@@ -162,6 +162,23 @@ textarea {
   font-size: 12px;
 }
 
+.save-status {
+  overflow: hidden;
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.save-status.unsaved {
+  color: #fbbf24;
+}
+
+.save-status.unsaved::before {
+  content: '● ';
+}
+
 .actions {
   display: flex;
   align-items: center;

@@ -57,9 +57,10 @@ src/
     *.test.ts            Vitest unit tests, next to the code they test
   state/                 App state and side effects
     store.ts             Global editor store: open project (or none), selection, view options, undo/redo
-    persistence.ts       Autosave (localStorage), New/Open/Save of .unison project files
+    persistence.ts       Autosave (localStorage), New/Open/Save/Save as of .unison project files, unsaved-changes guard
+    fileHandles.ts       Save in place (Edge/Chrome): file pickers, write with permission, remember the linked file in IndexedDB
     useMotion.ts         Hook: glide between formations and full playback (requestAnimationFrame)
-    store.test.ts        Vitest unit tests for the store (no project open, open, undoable replace)
+    store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking)
   components/            React UI
     Welcome.tsx          Start screen while no project is open: New project / Open project…
     TopBar.tsx           App name, project name, undo/redo, New/Open/Save
@@ -178,7 +179,7 @@ Playback time `t` (seconds) runs through each formation as *hold* then *transiti
 A single module-level store read in React through `useEditor()` (`useSyncExternalStore`).
 
 ```ts
-EditorState { doc: Choreography | null; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+EditorState { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
 OpenState   = EditorState & { doc: Choreography }   // narrowed with isOpen(state)
 ViewOptions { snap; names; prevPaths; nextPaths }
 Snapshot    { doc; current }
@@ -186,11 +187,15 @@ Snapshot    { doc; current }
 
 `doc` is `null` until the first project is created or opened (or restored from autosave). There's no way to close a project, so once a project is open, `doc` stays non-null.
 
+**Unsaved changes:** `savedDoc` is the document as last opened from or saved to a file (`null` if it never was). `hasUnsavedChanges(state)` is simply `doc !== savedDoc`. Because documents are immutable, undoing back to the saved version makes the project "saved" again. `fileName` is the name of the linked file Save writes to (Edge/Chrome only; `null` otherwise). Neither is part of undo history.
+
 | Method | Behavior |
 | --- | --- |
-| `init(doc, view)` | Called once in `main.tsx` before rendering, with the autosaved project or `null`. |
+| `init(doc, view, savedDoc?)` | Called once in `main.tsx` before rendering, with the autosaved project (or `null`) and, if it had no unsaved changes, the same doc as `savedDoc`. |
 | `commit(recipe, coalesce?)` | **The only way to change the document.** No-op when no project is open. Applies `recipe(doc)`; if it returns the same object, nothing happens. Otherwise pushes the previous `{ doc, current }` onto `past` (max 200), clears `future`. Consecutive commits with the same non-undefined `coalesce` key merge into one undo step (used for typing and number fields; keys look like `name:<formationId>`, `nudge:<index>:<ids>`). |
-| `open(doc)` | Shows `doc` as the open project (New and Open use it), then resets `current` and the selection. If a project is already open, the replacement goes through `commit`, so it **can be undone**; the first project opened from the welcome screen starts with empty history. |
+| `open(doc, fileName, saved)` | Shows `doc` as the open project with a **fresh undo history**, resets `current` and the selection, and sets `fileName` and `savedDoc` (`doc` if `saved`, else `null`). Opening is deliberately not undoable: otherwise undo could bring back a different project while Save still points at the newly opened file and overwrite it. Unsaved work is protected by a confirmation in `persistence.ts` instead. |
+| `markSaved(doc, fileName)` | Records that `doc` (the version that was written, which may be older than the current doc if the user kept editing during the write) is saved, and the linked file name. |
+| `setFileName(name)` | Used when the remembered file link is restored after startup. |
 | `undo()` / `redo()` | Restore a snapshot, including which formation was current. Reset coalescing. |
 | `setCurrent(i)`, `select(ids)`, `setView(patch)` | Not undoable. |
 
@@ -198,11 +203,26 @@ While a project is open, every state change clamps `current` to a valid index an
 
 ### `persistence.ts`
 
-- **Project files:** a project is saved as `<project name>.unison` (`FILE_EXTENSION`), containing `serialize(doc)` JSON (see §8).
-- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc` or `view`, writes them to `localStorage` keys `unison.autosave.v1` (only when a project is open) and `unison.view.v1`. Write errors are ignored.
-- **Startup:** `loadAutosave()` parses the saved project with `parseChoreography`, or returns `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
+- **Project files:** a project is saved as `<project name>.unison` (`FILE_EXTENSION`), containing `serialize(doc)` JSON (see §8). The file name is the project name stripped of characters that are invalid in file names, max 80 chars, fallback `Untitled`.
+- **Two ways of saving**, chosen by `supportsFileHandles` (from `fileHandles.ts`):
+  - **Edge and Chrome (save in place):** Open uses the browser's file picker and keeps the file's handle as the **linked file** (module variable `linkedFile`; the store only holds its name). **Save** writes straight back to the linked file. **Save as…** asks for a new location (suggested name `<project name>.unison`, same remembered folder as Open), writes there, and makes it the linked file. Save without a linked file (a new project) behaves like Save as. If the linked file was moved or deleted, Save falls back to Save as; if the user refuses write permission, an alert explains it and suggests Save as.
+  - **Safari and Firefox (no file access API):** Open uses a hidden `<input type=file accept=".unison">`; Save downloads `<project name>.unison` through a Blob link (type `application/octet-stream`, so browsers keep the exact name instead of appending `.json`). There's no Save as… button; nothing is ever linked.
+- **Remembering the linked file:** whenever the linked file changes, its handle is stored in IndexedDB (`rememberFile`; `null` deletes it). On startup, `restoreFileLink()` (called from `main.tsx`) re-links it if a project was restored, so Save keeps writing to the same file after the browser is reopened. The browser asks for write permission again on the first Save of a new session. A `generation` counter, bumped whenever the project is replaced, stops slow async work (restoring the link, writing a file) from applying to a project that was replaced in the meantime.
+- **New / Open** go through `replaceProject`, which updates `linkedFile` (null for New and for fallback Open) and calls `editor.open`. Both first call `okToReplace()`: if the project has unsaved changes, a `confirm` asks before discarding them. New prompts for 1–100 dancers → `createChoreography` (not saved: `savedDoc` is null). Open errors are shown with `alert`.
+- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. Write errors are ignored.
+- **Startup:** `loadAutosave()` returns the saved project and whether it had unsaved changes (missing flag counts as unsaved), or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
 - `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
-- **New:** `prompt` for 1–100 dancers → `createChoreography` → `editor.open`. **Open:** hidden `<input type=file accept=".unison">` → `parseChoreography` → `editor.open`; errors via `alert`. **Save:** downloads `<project name>.unison` through a Blob link (name stripped of characters that are invalid in file names, max 80 chars, fallback `Untitled`). The Blob type is `application/octet-stream` so browsers keep the exact file name instead of appending an extension like `.json`.
+
+### `fileHandles.ts`: save-in-place helpers
+
+Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFilePicker`, `createWritable`, `queryPermission`/`requestPermission`), which only Chromium browsers (Edge, Chrome) have. It works on `file://` pages there. The API isn't in TypeScript's DOM types, so the needed shapes are declared locally.
+
+| Export | Purpose |
+| --- | --- |
+| `supportsFileHandles` | Both pickers exist. Everything else is only called when this is true. |
+| `pickFileToOpen(ext)`, `pickFileToSave(ext, suggestedName)` | Pickers filtered to `.unison`, sharing picker id `unison-projects` so the browser remembers the last folder. Return `null` when the user cancels. |
+| `writeFile(handle, text)` | Checks and, if needed, requests read-write permission (returns `false` if refused), then overwrites the file. |
+| `rememberFile(handle \| null)`, `recallFile()` | Store/load the linked file handle in IndexedDB (database `unison`, store `files`, key `current`). Failures are swallowed; the only effect is that Save asks where to save. |
 
 ### `useMotion.ts`: what the stage shows
 
@@ -239,7 +259,7 @@ flowchart LR
 | Keys | Action | Notes |
 | --- | --- | --- |
 | Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, Ctrl+Y | Undo / redo | Handled even while typing in a field (replaces the browser's text undo). |
-| Ctrl/⌘+S, Ctrl/⌘+O | Save / Open | Also handled while typing. |
+| Ctrl/⌘+S, Ctrl/⌘+Shift+S, Ctrl/⌘+O | Save / Save as / Open | Also handled while typing. |
 | Ctrl/⌘+A | Select all dancers | Ignored while typing (normal text select-all). |
 | Space | Play / pause | Ignored when focus is on a button (so Space still clicks it). |
 | Esc | Pause and clear selection | |
@@ -279,7 +299,7 @@ Sections, top to bottom:
 ### `TopBar.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
 
 - `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
-- `TopBar`: logo and name, editable project name, autosave warning when needed, undo/redo, New, Open…, Save. Calls `onBeforeReplace` (stop motion) before New/Open.
+- `TopBar`: logo and name, editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open…, Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
 - `Icon`: inline SVG paths (`play`, `pause`, `prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`) rendered with class `glyph`; `Logo` for the brand mark.
 - `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `clock(seconds)`; `toggleId(ids, id)`.
 
@@ -312,7 +332,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 - **Must work from `file://`:** don't fetch local files, add service workers, or rely on code splitting/lazy-loaded chunks. Imported assets must be inlined by the single-file build. No `crypto.randomUUID` (use `uid()`).
 - **Storage may be unavailable:** always go through `persistence.ts`, which tolerates `localStorage` failures.
-- **Cross-browser file I/O:** Save is a Blob download and Open is an `<input type=file>`. Don't depend on the File System Access API (not in Safari or Firefox).
+- **Cross-browser file I/O:** every file feature must work in Safari and Firefox too. The File System Access API (save in place) is only used behind `supportsFileHandles`, with the download / `<input type=file>` fallback for other browsers.
 - **No runtime network access or accounts.**
 - **Platform-neutral input:** Ctrl and ⌘ are treated the same; show shortcuts with `shortcut()`.
 
@@ -332,7 +352,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: timeline sampling, drag snapping/clamping, file round-trip/repair/rejection, formation and dancer edits, store behavior with no project / opening / undoable replace. |
+| `npm test` | Unit tests: timeline sampling, drag snapping/clamping, file round-trip/repair/rejection, formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |

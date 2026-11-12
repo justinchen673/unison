@@ -6,7 +6,7 @@ import { TopBar } from './components/TopBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
 import { duplicateFormation, removeDancers, setPositions } from './model/choreography.ts'
 import { SNAP_STEP, dragOffset, shift } from './model/stage.ts'
-import { openPiece, savePiece } from './state/persistence.ts'
+import { openPiece, saveAsPiece, savePiece } from './state/persistence.ts'
 import { editor, isOpen, useEditor, type OpenState } from './state/store.ts'
 import { useMotion } from './state/useMotion.ts'
 
@@ -46,7 +46,7 @@ function Editor({ state }: { state: OpenState }) {
     }
     if (mod && key === 's') {
       e.preventDefault()
-      savePiece()
+      void (e.shiftKey ? saveAsPiece() : savePiece())
       return
     }
     if (mod && key === 'o') {

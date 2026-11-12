@@ -9,9 +9,12 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 1. Build it once (see [Developing](#developing)) or get the built file from a teammate. The whole app is **one file**: `dist/index.html`. Rename it to `Unison.html` if you like and share it via Drive, Teams, email, or AirDrop.
 2. Double-click the file. It opens in your default browser (Edge, Chrome, Safari, or Firefox). There's no server, no account, and no internet needed.
 3. Click **New project** (you choose how many dancers) or **Open project…** to load a `.unison` file.
-4. Your open project **autosaves** in the browser and comes back the next time you open Unison. Use **Save** to download it as a `<project name>.unison` file (for backups or sharing) and **Open…** to load one.
+4. Your open project **autosaves** in the browser and comes back the next time you open Unison. The top bar shows whether it has **unsaved changes**, and Unison asks before New or Open would discard them.
+5. **Saving to a file:**
+   - **Edge and Chrome:** **Save** writes straight back to the file you opened (the browser asks once for permission to edit it). **Save as…** saves a new copy wherever you choose, and later Saves go to that copy. Unison remembers the file even after you close the browser. A new project's first Save asks where to put it.
+   - **Safari and Firefox:** these browsers don't let pages write to your files, so **Save** downloads a `<project name>.unison` file instead.
 
-> Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Use **Save** to be safe.
+> Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Save to a file to be safe.
 
 ### What the prototype does
 
@@ -20,7 +23,7 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 - **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes. Each formation has a hold time and a move-to-next time.
 - **Playback**: dancers glide when you switch formations, and **Play** runs the whole piece with eased transitions.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
-- **Undo/redo** for every change.
+- **Undo/redo** for every change (each opened project starts with a fresh history).
 
 ### Keyboard shortcuts
 
@@ -33,7 +36,7 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 | Ctrl/⌘+A | Select all dancers |
 | Delete / Backspace | Remove selected dancers from the piece |
 | Ctrl/⌘+Z, Ctrl/⌘+Shift+Z (or Ctrl+Y) | Undo, redo |
-| Ctrl/⌘+S, Ctrl/⌘+O | Save to a file, open a file |
+| Ctrl/⌘+S, Ctrl/⌘+Shift+S, Ctrl/⌘+O | Save, save as a new file (Edge/Chrome), open a file |
 | Esc | Clear selection / pause |
 
 ## Developing

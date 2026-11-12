@@ -18,6 +18,10 @@ export interface ViewOptions {
 export interface EditorState {
   /** The open project, or null before one has been created or opened. */
   doc: Choreography | null
+  /** The project as last saved or opened from a file; null if it has never been saved. `doc !== savedDoc` means unsaved changes. */
+  savedDoc: Choreography | null
+  /** Name of the file Save writes to (browsers with file access only), or null. */
+  fileName: string | null
   /** Index of the formation being edited. */
   current: number
   /** Selected dancer ids. */
@@ -30,6 +34,7 @@ export interface EditorState {
 /** Editor state while a project is open. */
 export type OpenState = EditorState & { doc: Choreography }
 export const isOpen = (s: EditorState): s is OpenState => s.doc !== null
+export const hasUnsavedChanges = (s: EditorState) => s.doc !== null && s.doc !== s.savedDoc
 
 const HISTORY_LIMIT = 200
 const listeners = new Set<() => void>()
@@ -51,8 +56,8 @@ function set(patch: Partial<EditorState>) {
 
 /** Single global editor store. Every document change goes through `commit` so it can be undone. */
 export const editor = {
-  init(doc: Choreography | null, view: ViewOptions) {
-    state = { doc, current: 0, selection: [], view, past: [], future: [] }
+  init(doc: Choreography | null, view: ViewOptions, savedDoc: Choreography | null = null) {
+    state = { doc, savedDoc, fileName: null, current: 0, selection: [], view, past: [], future: [] }
   },
   get: () => state,
   subscribe(listener: () => void) {
@@ -70,14 +75,20 @@ export const editor = {
     coalesceKey = coalesce
     set({ doc, future: [], past: merge ? state.past : [...state.past, { doc: state.doc, current: state.current }].slice(-HISTORY_LIMIT) })
   },
-  /** Shows `doc` as the open project. Replacing an open project is undoable; opening the first one starts with empty history. */
-  open(doc: Choreography) {
-    if (state.doc) editor.commit(() => doc)
-    else {
-      coalesceKey = undefined
-      set({ doc, past: [], future: [] })
-    }
-    set({ current: 0, selection: [] })
+  /**
+   * Shows `doc` as the open project with a fresh undo history (like opening a document in a desktop app), so undo can
+   * never bring back a different project while Save points at this one's file. `saved` marks it as matching a file.
+   */
+  open(doc: Choreography, fileName: string | null, saved: boolean) {
+    coalesceKey = undefined
+    set({ doc, savedDoc: saved ? doc : null, fileName, current: 0, selection: [], past: [], future: [] })
+  },
+  /** Records that `doc` was just written to a file (`fileName` is null for a plain download). */
+  markSaved(doc: Choreography, fileName: string | null) {
+    set({ savedDoc: doc, fileName })
+  },
+  setFileName(fileName: string | null) {
+    set({ fileName })
   },
   undo() {
     const previous = state.past.at(-1)

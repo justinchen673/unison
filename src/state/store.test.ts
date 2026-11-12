@@ -1,29 +1,41 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createChoreography } from '../model/choreography.ts'
-import { editor } from './store.ts'
+import { editor, hasUnsavedChanges } from './store.ts'
 
 const view = { snap: true, names: true, prevPaths: true, nextPaths: false }
+const rename = (name: string) => editor.commit((d) => ({ ...d, name }))
 
 describe('editor store', () => {
   beforeEach(() => editor.init(null, view))
 
   it('ignores edits while no project is open', () => {
-    editor.commit((d) => ({ ...d, name: 'x' }))
+    rename('x')
     expect(editor.get()).toMatchObject({ doc: null, past: [] })
   })
 
-  it('opens the first project with no undo history', () => {
-    const doc = createChoreography(3)
-    editor.open(doc)
-    expect(editor.get()).toMatchObject({ doc, past: [], future: [] })
+  it('starts every opened project with fresh undo history', () => {
+    editor.open(createChoreography(3), null, false)
+    rename('edited')
+    const next = createChoreography(5)
+    editor.open(next, 'Next.unison', true)
+    expect(editor.get()).toMatchObject({ doc: next, fileName: 'Next.unison', past: [], future: [] })
   })
 
-  it('makes replacing an open project undoable', () => {
-    const first = createChoreography(3)
-    const second = createChoreography(5)
-    editor.open(first)
-    editor.open(second)
+  it('tracks unsaved changes against the last save, including through undo', () => {
+    editor.open(createChoreography(3), null, true)
+    expect(hasUnsavedChanges(editor.get())).toBe(false)
+    rename('edited')
+    expect(hasUnsavedChanges(editor.get())).toBe(true)
+    editor.markSaved(editor.get().doc!, 'Show.unison')
+    expect(hasUnsavedChanges(editor.get())).toBe(false)
     editor.undo()
-    expect(editor.get().doc).toBe(first)
+    expect(hasUnsavedChanges(editor.get())).toBe(true)
+    editor.redo()
+    expect(hasUnsavedChanges(editor.get())).toBe(false)
+  })
+
+  it('treats a new, never-saved project as unsaved', () => {
+    editor.open(createChoreography(3), null, false)
+    expect(hasUnsavedChanges(editor.get())).toBe(true)
   })
 })

@@ -1,9 +1,12 @@
 import { createChoreography } from '../model/choreography.ts'
 import { parseChoreography, serialize } from '../model/file.ts'
 import type { Choreography } from '../model/types.ts'
-import { editor, type ViewOptions } from './store.ts'
+import { pickFileToOpen, pickFileToSave, recallFile, rememberFile, supportsFileHandles, writeFile } from './fileHandles.ts'
+import { editor, hasUnsavedChanges, type ViewOptions } from './store.ts'
 
 const AUTOSAVE_KEY = 'unison.autosave.v1'
+/** '0' when the autosaved project matches its file, '1' when it has unsaved changes. */
+const UNSAVED_KEY = 'unison.unsaved.v1'
 const VIEW_KEY = 'unison.view.v1'
 /** Project files are the JSON from `serialize`, saved with this extension. */
 export const FILE_EXTENSION = '.unison'
@@ -20,10 +23,10 @@ export const canAutosave = (() => {
   }
 })()
 
-export function loadAutosave(): Choreography | null {
+export function loadAutosave(): { doc: Choreography; unsaved: boolean } | null {
   try {
     const json = localStorage.getItem(AUTOSAVE_KEY)
-    return json ? parseChoreography(json) : null
+    return json ? { doc: parseChoreography(json), unsaved: localStorage.getItem(UNSAVED_KEY) !== '0' } : null
   } catch {
     return null
   }
@@ -37,19 +40,23 @@ export function loadView(): ViewOptions {
   }
 }
 
-/** Mirrors the open piece and view options into localStorage shortly after each change. */
+/** Mirrors the open project, whether it has unsaved changes, and view options into localStorage shortly after each change. */
 export function startAutosave() {
-  let { doc, view } = editor.get()
+  let { doc, savedDoc, view } = editor.get()
   let timer = 0
   editor.subscribe(() => {
     const latest = editor.get()
-    if (latest.doc === doc && latest.view === view) return
+    if (latest.doc === doc && latest.savedDoc === savedDoc && latest.view === view) return
     doc = latest.doc
+    savedDoc = latest.savedDoc
     view = latest.view
     clearTimeout(timer)
     timer = window.setTimeout(() => {
       try {
-        if (doc) localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(doc))
+        if (doc) {
+          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(doc))
+          localStorage.setItem(UNSAVED_KEY, doc === savedDoc ? '0' : '1')
+        }
         localStorage.setItem(VIEW_KEY, JSON.stringify(view))
       } catch {
         // Storage full or unavailable; Save to a file still works.
@@ -58,7 +65,39 @@ export function startAutosave() {
   })
 }
 
+/** The file Save writes to (Edge and Chrome only). Not in the store because nothing renders it; the store keeps its name. */
+let linkedFile: FileSystemFileHandle | null = null
+/** Bumped whenever the project is replaced, so slow file operations for an old project can't affect the new one. */
+let generation = 0
+
+function replaceProject(doc: Choreography, file: FileSystemFileHandle | null, saved: boolean) {
+  generation++
+  linkedFile = file
+  void rememberFile(file)
+  editor.open(doc, file?.name ?? null, saved)
+}
+
+/** Re-links the file the open project was saved to before the browser was closed. */
+export async function restoreFileLink() {
+  if (!supportsFileHandles || !editor.get().doc) return
+  const startedAt = generation
+  const file = await recallFile()
+  if (!file || generation !== startedAt) return
+  linkedFile = file
+  editor.setFileName(file.name)
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : '')
+const baseName = (doc: Choreography) => doc.name.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'Untitled'
+
+/** True if there are no unsaved changes, or the user agrees to lose them. */
+function okToReplace() {
+  const state = editor.get()
+  return !hasUnsavedChanges(state) || confirm(`"${state.doc?.name.trim() || 'Untitled'}" has changes that aren't saved to a file. Discard them?`)
+}
+
 export function newPiece() {
+  if (!okToReplace()) return
   const answer = prompt('Start a new project. How many dancers?', '8')
   if (answer === null) return
   const count = Math.round(Number(answer))
@@ -66,7 +105,7 @@ export function newPiece() {
     alert('Enter a number of dancers from 1 to 100.')
     return
   }
-  editor.open(createChoreography(count))
+  replaceProject(createChoreography(count), null, false)
 }
 
 function pickTextFile(): Promise<string | null> {
@@ -78,26 +117,67 @@ function pickTextFile(): Promise<string | null> {
   })
 }
 
+/** Opens a project file. In Edge and Chrome the file stays linked, so Save writes back to it. */
 export async function openPiece() {
-  const json = await pickTextFile()
-  if (json === null) return
+  if (!okToReplace()) return
   try {
-    editor.open(parseChoreography(json))
+    if (supportsFileHandles) {
+      const file = await pickFileToOpen(FILE_EXTENSION)
+      if (file) replaceProject(parseChoreography(await (await file.getFile()).text()), file, true)
+    } else {
+      const json = await pickTextFile()
+      if (json !== null) replaceProject(parseChoreography(json), null, true)
+    }
   } catch (error) {
-    alert(`Couldn't open that file. ${error instanceof Error ? error.message : ''}`)
+    alert(`Couldn't open that file. ${errorText(error)}`)
   }
 }
 
-/**
- * Downloads the project as `<name>.unison` (a plain download works the same in every browser and OS).
- * The generic binary type stops browsers from appending their own extension, such as `.json`.
- */
-export function savePiece() {
+/** Writes the project back to its linked file; without one (new project, or Safari/Firefox) it works like Save as. */
+export async function savePiece() {
   const { doc } = editor.get()
   if (!doc) return
-  const baseName = doc.name.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'Untitled'
+  const file = linkedFile
+  if (!file) return saveAsPiece()
+  const startedAt = generation
+  try {
+    if (!(await writeFile(file, serialize(doc)))) {
+      alert(`Unison wasn't allowed to edit "${file.name}". Use Save as… to save a copy somewhere else.`)
+      return
+    }
+    if (generation === startedAt) editor.markSaved(doc, file.name)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotFoundError') return saveAsPiece()
+    alert(`Couldn't save to "${file.name}". ${errorText(error)}`)
+  }
+}
+
+/** Saves to a new file chosen by the user (Edge and Chrome), which becomes the linked file. Other browsers download it. */
+export async function saveAsPiece() {
+  const { doc } = editor.get()
+  if (!doc) return
+  const name = `${baseName(doc)}${FILE_EXTENSION}`
+  if (!supportsFileHandles) {
+    download(doc, name)
+    editor.markSaved(doc, null)
+    return
+  }
+  const startedAt = generation
+  try {
+    const file = await pickFileToSave(FILE_EXTENSION, name)
+    if (!file || !(await writeFile(file, serialize(doc))) || generation !== startedAt) return
+    linkedFile = file
+    void rememberFile(file)
+    editor.markSaved(doc, file.name)
+  } catch (error) {
+    alert(`Couldn't save the file. ${errorText(error)}`)
+  }
+}
+
+/** Plain download. The generic binary type stops browsers from appending their own extension, such as `.json`. */
+function download(doc: Choreography, fileName: string) {
   const url = URL.createObjectURL(new Blob([serialize(doc)], { type: 'application/octet-stream' }))
-  const link = Object.assign(document.createElement('a'), { href: url, download: `${baseName}${FILE_EXTENSION}` })
+  const link = Object.assign(document.createElement('a'), { href: url, download: fileName })
   document.body.append(link)
   link.click()
   link.remove()
