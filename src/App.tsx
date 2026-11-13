@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent } from 'react'
+import { Icon } from './components/Icon.tsx'
 import { Inspector } from './components/Inspector.tsx'
 import { Stage } from './components/Stage.tsx'
 import { Timeline } from './components/Timeline.tsx'
@@ -67,6 +68,8 @@ function Editor({ state }: { state: OpenState }) {
     const arrow = ARROWS.get(e.key)
     if (e.key === 'Escape') {
       editor.select([])
+    } else if (key === 'f') {
+      editor.setView({ hideBars: !view.hideBars })
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.length) {
       e.preventDefault()
       editor.commit((d) => removeDancers(d, selection))
@@ -83,14 +86,19 @@ function Editor({ state }: { state: OpenState }) {
     return () => window.removeEventListener('keydown', listener)
   }, [])
 
+  const barsHidden = view.hideBars
   return (
-    <div className="app">
-      <TopBar state={state} onBeforeReplace={motion.stop} />
+    <div className={`app${barsHidden ? ' bars-hidden' : ''}`}>
+      {!barsHidden && <TopBar state={state} onBeforeReplace={motion.stop} />}
       <main className="stage-wrap">
         <Stage doc={doc} current={current} positions={motion.positions} selection={selection} view={view} moving={motion.moving} onEditStart={motion.stop} />
+        <button className="btn icon bars-toggle" title={barsHidden ? 'Show the bars (F)' : 'Hide the bars to see only the stage (F)'}
+          aria-pressed={barsHidden} onClick={() => editor.setView({ hideBars: !barsHidden })}>
+          <Icon name={barsHidden ? 'collapse' : 'expand'} />
+        </button>
       </main>
-      <Inspector state={state} onAddFormation={addFormation} />
-      <Timeline doc={doc} current={current} onSelect={motion.goTo} onAdd={addFormation} />
+      {!barsHidden && <Inspector state={state} onAddFormation={addFormation} />}
+      {!barsHidden && <Timeline doc={doc} current={current} onSelect={motion.goTo} onAdd={addFormation} />}
     </div>
   )
 }

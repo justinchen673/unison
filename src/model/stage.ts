@@ -4,7 +4,7 @@ import type { Point, Positions, StageSize } from './types.ts'
 
 /** Width of the offstage wing on each side of the stage. */
 export const WING = 6
-export const DANCER_RADIUS = 1
+export const DANCER_RADIUS = 0.85
 export const DEFAULT_STAGE: StageSize = { width: 40, depth: 24, grid: 2 }
 export const MIN_STAGE = 6
 export const MAX_STAGE = 200

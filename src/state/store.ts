@@ -13,6 +13,8 @@ export interface ViewOptions {
   prevPaths: boolean
   /** Ghosts and paths showing where dancers go next. */
   nextPaths: boolean
+  /** Hides the top bar, side panel and formation strip so the stage fills the window. */
+  hideBars: boolean
 }
 
 /** A project file that was opened or saved before (Edge and Chrome only), shown in the recent-projects lists. */

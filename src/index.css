@@ -393,10 +393,30 @@ textarea {
 
 /* ---------- Stage ---------- */
 .stage-wrap {
+  position: relative;
   grid-area: stage;
   display: flex;
   min-height: 0;
   padding: 12px;
+}
+
+/* Stage-only mode: the top bar, side panel and formation strip aren't rendered. */
+.app.bars-hidden {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'stage';
+}
+
+.bars-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  opacity: 0.6;
+}
+
+.bars-toggle:hover,
+.bars-toggle:focus-visible {
+  opacity: 1;
 }
 
 .stage {
@@ -442,15 +462,15 @@ textarea {
 
 .stage .stage-number {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 9px;
 }
 
 .stage .edge-label,
 .stage .wing-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 7.5px;
   font-weight: 600;
-  letter-spacing: 3px;
+  letter-spacing: 2px;
 }
 
 .stage .wing-label {
@@ -479,6 +499,7 @@ textarea {
 
 .dancer .label {
   font-weight: 700;
+  dominant-baseline: alphabetic;
 }
 
 .dancer .name {

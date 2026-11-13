@@ -10,7 +10,7 @@ const UNSAVED_KEY = 'unison.unsaved.v1'
 const VIEW_KEY = 'unison.view.v1'
 /** Project files are the JSON from `serialize`, saved with this extension. */
 export const FILE_EXTENSION = '.unison'
-const DEFAULT_VIEW: ViewOptions = { snap: true, names: true, prevPaths: true, nextPaths: false }
+const DEFAULT_VIEW: ViewOptions = { snap: true, names: true, prevPaths: true, nextPaths: false, hideBars: false }
 
 /** Whether browser storage works here; some browsers restrict it for pages opened from file://. */
 export const canAutosave = (() => {

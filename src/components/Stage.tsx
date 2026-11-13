@@ -8,10 +8,34 @@ import { inkFor, toggleId } from './ui.ts'
 /** SVG user units per foot. Drawing at this scale keeps text clear of browser minimum-font-size clamps. */
 const U = 12
 const R = DANCER_RADIUS * U
-/** Label font size by character count. */
-const LABEL_SIZE = [15, 15, 12.5, 10]
+/** Label font size by character count, relative to the marker radius. */
+const LABEL_SIZE = [1.25, 1.25, 1.04, 0.83].map((k) => k * R)
 /** Moves shorter than this (feet) count as a click, not a drag. */
 const MIN_MOVE = 0.15
+
+const measurer = document.createElement('canvas').getContext('2d')
+const MEASURE_SIZE = 1000
+/** Label ink offsets per text, as a fraction of the font size. */
+const inkOffsets = new Map<string, Point>()
+/**
+ * Where to put a label's alphabetic baseline so its visible glyphs (not its em box) are centered on the marker.
+ * Centering on the em box (`dominant-baseline: central`) leaves digits and capitals noticeably low.
+ */
+function labelOffset(text: string, size: number): Point {
+  let ratio = inkOffsets.get(text)
+  if (!ratio) {
+    ratio = { x: 0, y: 0.35 }
+    if (measurer) {
+      // Measured at a large size and scaled, because browsers round glyph metrics to whole pixels at small sizes.
+      measurer.font = `700 ${MEASURE_SIZE}px ${getComputedStyle(document.documentElement).fontFamily}`
+      measurer.textAlign = 'center'
+      const m = measurer.measureText(text)
+      ratio = { x: (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2 / MEASURE_SIZE, y: (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2 / MEASURE_SIZE }
+    }
+    inkOffsets.set(text, ratio)
+  }
+  return { x: ratio.x * size, y: ratio.y * size }
+}
 
 type Gesture =
   | { kind: 'drag'; ids: string[]; anchor: string; start: Point; delta: Point }
@@ -114,7 +138,7 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
     <svg
       ref={svgRef}
       className={`stage${gesture?.kind === 'drag' ? ' dragging' : ''}`}
-      viewBox={`${-outer * U - 12} ${(-D / 2) * U - 44} ${2 * outer * U + 24} ${D * U + 116}`}
+      viewBox={`${-outer * U - 4} ${(-D / 2) * U - 20} ${2 * outer * U + 8} ${D * U + 58}`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => updateGesture(null)}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -126,9 +150,9 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
       {xs.map((x) => <line key={`x${x}`} className={x === 0 ? 'grid center' : 'grid'} x1={x * U} x2={x * U} y1={(-D / 2) * U} y2={(D / 2) * U} />)}
       {ys.map((y) => <line key={`y${y}`} className={y === 0 ? 'grid center' : 'grid'} x1={(-W / 2) * U} x2={(W / 2) * U} y1={y * U} y2={y * U} />)}
       <rect className="floor-edge" x={(-W / 2) * U} y={(-D / 2) * U} width={W * U} height={D * U} />
-      {numbered.map((x) => <text key={`n${x}`} className="stage-number" x={x * U} y={(D / 2) * U + 18}>{Math.abs(x)}</text>)}
-      <text className="edge-label" x={0} y={(-D / 2) * U - 22}>UPSTAGE</text>
-      <text className="edge-label" x={0} y={(D / 2) * U + 50}>AUDIENCE</text>
+      {numbered.map((x) => <text key={`n${x}`} className="stage-number" x={x * U} y={(D / 2) * U + 11}>{Math.abs(x)}</text>)}
+      <text className="edge-label" x={0} y={(-D / 2) * U - 10}>UPSTAGE</text>
+      <text className="edge-label" x={0} y={(D / 2) * U + 29}>AUDIENCE</text>
 
       {!moving && doc.dancers.map((d) => (
         <g key={d.id} className="guides" stroke={d.color}>
@@ -145,7 +169,7 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
           <g key={d.id} data-dancer={d.id} className={`dancer${selected ? ' selected' : ''}${isOffstage(p, doc.stage) ? ' offstage' : ''}`} transform={`translate(${p.x * U} ${p.y * U})`}>
             {selected && <circle className="ring" r={R + 5} />}
             <circle className="body" r={R} fill={d.color} />
-            <text className="label" fill={inkFor(d.color)} fontSize={LABEL_SIZE[Math.min([...d.label].length, 3)]}>{d.label}</text>
+            <Label text={d.label} color={d.color} />
             {view.names && <text className="name" y={R + 12}>{d.name}</text>}
           </g>
         )
@@ -157,6 +181,13 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
       )}
     </svg>
   )
+}
+
+/** A dancer's 1–3 character label, optically centered in the marker. */
+function Label({ text, color }: { text: string; color: string }) {
+  const size = LABEL_SIZE[Math.min([...text].length, 3)]
+  const offset = labelOffset(text, size)
+  return <text className="label" x={offset.x} y={offset.y} fill={inkFor(color)} fontSize={size}>{text}</text>
 }
 
 /** Faded "ghost" marker at a neighbouring formation's position plus a dashed path between it and the dancer. */

@@ -25,12 +25,14 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 - **Moving between formations**: click a formation or use ←/→, and the dancers glide to their new spots so you can see who moves where.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
 - **Undo/redo** for every change (each opened project starts with a fresh history).
+- **Stage-only view**: the button in the stage's top-right corner (or **F**) hides the top bar, side panel and formation strip so the stage fills the window. Click it again to bring them back.
 
 ### Keyboard shortcuts
 
 | Keys | Action |
 | --- | --- |
 | ← / → | Previous / next formation (when no dancer is selected) |
+| F | Hide / show the top bar, side panel and formation strip (stage only) |
 | Arrow keys | Nudge selected dancers half a grid square (Shift: a whole square) |
 | Shift+click, or drag a box | Select several dancers |
 | Ctrl/⌘+A | Select all dancers |

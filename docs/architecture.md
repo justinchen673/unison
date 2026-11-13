@@ -89,6 +89,8 @@ With a project open, `App` renders the editor as a CSS grid (`.app` in `index.cs
 └───────────────────────────────────────────────┴───────────────┘
 ```
 
+**Stage-only mode** (`view.hideBars`, toggled by the button in the stage's top-right corner or the **F** key): `.app.bars-hidden` collapses the grid to the single `stage` area and the other three regions aren't rendered, so the stage fills the window. The setting is a saved view option, so it survives reopening; the toggle button stays visible to bring the bars back.
+
 ## 4. Data model (`src/model/types.ts`)
 
 ```ts
@@ -128,7 +130,7 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `snapStep(stage)` | Half a grid square (`stage.grid / 2`): dancers snap to grid lines and square centers. Also the keyboard nudge step (Shift+arrow nudges a whole square). |
 | `gridSize(feet)` | Rounds a square size to the nearest half foot within `MIN_GRID`–`MAX_GRID` (1–20 ft). |
 | `WING = 6` | Width of each side wing in feet. |
-| `DANCER_RADIUS = 1` | Marker radius in feet (used for drawing and for trimming path lines). |
+| `DANCER_RADIUS = 0.85` | Marker radius in feet (1.7 ft across). Used for drawing, thumbnails and trimming path lines; label font sizes in `Stage.tsx` scale with it. |
 | `DEFAULT_STAGE`, `MIN_STAGE`, `MAX_STAGE` | New-project stage (40 × 24 ft with 2 ft squares) and the allowed width/depth range (6–200 ft). |
 | `FEET_PER_METER` | Converts version 1 (meter) files when they're opened. |
 | `gridLines(half, step)` | Positions every `step` feet from center outward within `±half` (used for grid lines and `addDancer`'s candidate spots, with `step = stage.grid`). |
@@ -181,7 +183,7 @@ A single module-level store read in React through `useEditor()` (`useSyncExterna
 EditorState   { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; recent: RecentProject[]; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
 RecentProject { handle: FileSystemFileHandle; projectName }   // project name as of the last open/save of that file
 OpenState   = EditorState & { doc: Choreography }   // narrowed with isOpen(state)
-ViewOptions { snap; names; prevPaths; nextPaths }
+ViewOptions { snap; names; prevPaths; nextPaths; hideBars }   // hideBars = stage-only mode (see §3)
 Snapshot    { doc; current }
 ```
 
@@ -214,7 +216,7 @@ While a project is open, every state change clamps `current` to a valid index an
 - **Close** (`closeProject()`, the top-bar logo): also asks via `okToReplace()`, then unlinks the file (and forgets it in IndexedDB) and calls `editor.close()`. Autosave then removes the saved project from `localStorage`, so reopening the page shows the welcome screen too.
 - **Recent projects (Edge and Chrome):** opening a file, Save and Save as each call `addRecent(file, projectName)`, which moves that file to the top of the list (deduplicated with `isSameEntry`, max 8) and stores the list in IndexedDB. `loadRecent()` (from `main.tsx`) loads it at startup. `openRecent(entry)` reopens a project **without a file window**: after `okToReplace()`, it asks for read-write permission (no prompt within a session where it's already granted; one browser prompt after a restart, which also covers later saves), reads and parses the file, and links it. If the file was moved or deleted, an `alert` says so and the entry is dropped. `forgetRecent(entry)` removes one entry. The reason for this feature: the Windows file dialog itself takes about 1 s to open and another ~0.9 s to close (measured the same for the file-access picker and a plain file input), so skipping it is the only way to make reopening fast.
 - **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. When no project is open, it removes the first two keys instead. Write errors are ignored.
-- **Startup:** `loadAutosave()` returns the saved project and whether it had unsaved changes (missing flag counts as unsaved), or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths` off).
+- **Startup:** `loadAutosave()` returns the saved project and whether it had unsaved changes (missing flag counts as unsaved), or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths`, `hideBars` off).
 - `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
 
 ### `fileHandles.ts`: save-in-place helpers
@@ -258,7 +260,7 @@ flowchart LR
 
 ### `App.tsx`
 
-`Editor` wires the four regions together, defines `addFormation` (duplicate the current formation, then glide to the copy) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`). The welcome screen has no keyboard shortcuts.
+`Editor` wires the four regions together (or only the stage when `view.hideBars` is on; the TopBar, Inspector and Timeline then aren't rendered at all), renders the floating **bars toggle** button in the stage's top-right corner (always visible, so the bars can be brought back), defines `addFormation` (duplicate the current formation, then glide to the copy) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`). The welcome screen has no keyboard shortcuts.
 
 | Keys | Action | Notes |
 | --- | --- | --- |
@@ -266,6 +268,7 @@ flowchart LR
 | Ctrl/⌘+S, Ctrl/⌘+Shift+S, Ctrl/⌘+O | Save / Save as / Open | Also handled while typing. |
 | Ctrl/⌘+A | Select all dancers | Ignored while typing (normal text select-all). |
 | Esc | Clear selection | |
+| F | Hide / show the bars (stage-only mode) | Toggles `view.hideBars`. |
 | Delete / Backspace | Remove selected dancers | |
 | Arrows | With a selection: nudge half a grid square (Shift: a whole square), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
 
@@ -275,7 +278,7 @@ All shortcuts except undo/redo/save/open are ignored while focus is in an `input
 
 - Draws in SVG user units with `U = 12` units per foot (large enough units keep text crisp and above browsers' minimum font sizes). The `viewBox` covers the stage, both wings and margins for labels; the SVG scales to fill its area. Label margins and offsets are fixed SVG units, not feet, so labels look the same on any stage size.
 - Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, grid lines every `stage.grid` feet (`gridLines`, center lines dashed), floor border, front-edge stage numbers (distance from center) on every grid line, or on every 2nd/3rd… line when squares are under 2 ft so numbers never sit closer than 2 ft apart, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
-- **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed.
+- **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed. The label is **optically centered**: `labelOffset` measures the label's actual glyph bounds with a canvas `measureText` (at 1000 px, then scaled, because browsers round metrics to whole pixels at small sizes; cached per text) and places its alphabetic baseline so the visible ink is centered. Plain `dominant-baseline: central` centers the em box instead and left digits and capitals about 8% of the radius too low.
 - **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and a path line trimmed to the marker edges. Guides are hidden while anything is moving.
 - **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (stops glides). Then:
   - Shift/Ctrl/⌘+click a dancer toggles it in the selection.
@@ -305,7 +308,7 @@ Sections, top to bottom:
 - `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
 - `OpenMenu`: **Open ▾** button with a dropdown containing "Open a file…" (with its Ctrl/⌘+O hint) and the `RecentList`. Closes on choosing an item, clicking outside, or Esc.
 - `RecentList`: one row per recent project (project name, file name underneath); clicking a row calls `openRecent`, the faded **×** calls `forgetRecent`. It stays visible (not hover-only) so it works on touch screens too.
-- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`, `down`) rendered with class `glyph`; `Logo` for the brand mark.
+- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`, `down`, `expand`, `collapse`) rendered with class `glyph`; `Logo` for the brand mark.
 - `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`.
 
 ### Styling (`index.css`)

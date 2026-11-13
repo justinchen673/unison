@@ -118,6 +118,7 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
           <summary>Keyboard shortcuts</summary>
           <dl className="shortcuts">
             <dt>← →</dt><dd>Previous / next formation</dd>
+            <dt>F</dt><dd>Hide / show the bars (stage only)</dd>
             <dt>Arrow keys</dt><dd>Nudge selected dancers half a square, {snapStep(doc.stage)} ft (Shift: a whole square, {doc.stage.grid} ft)</dd>
             <dt>Shift+click or drag a box</dt><dd>Select several dancers</dd>
             <dt>{shortcut('Mod+A')}</dt><dd>Select all dancers</dd>
