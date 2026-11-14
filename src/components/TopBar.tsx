@@ -9,9 +9,10 @@ interface TopBarProps {
   state: OpenState
   /** Called before the open project is replaced (New / Open) so a glide in progress can stop. */
   onBeforeReplace: () => void
+  onExport: () => void
 }
 
-export function TopBar({ state, onBeforeReplace }: TopBarProps) {
+export function TopBar({ state, onBeforeReplace, onExport }: TopBarProps) {
   const unsaved = hasUnsavedChanges(state)
   const { mode } = state.view
   return (
@@ -34,6 +35,7 @@ export function TopBar({ state, onBeforeReplace }: TopBarProps) {
         {state.recent.length > 0
           ? <OpenMenu recent={state.recent} onBeforeReplace={onBeforeReplace} />
           : <button className="btn" title={`Open a ${FILE_EXTENSION} project file (${shortcut('Mod+O')})`} onClick={() => { onBeforeReplace(); void openPiece() }}>Open…</button>}
+        <button className="btn" title="Export the piece as a PDF or an MP4 video" onClick={onExport}>Export…</button>
         {supportsFileHandles && <button className="btn" title={`Save to a new ${FILE_EXTENSION} file (${shortcut('Mod+Shift+S')})`} onClick={() => void saveAsPiece()}>Save as…</button>}
         <button className="btn primary" title={`${state.fileName ? `Save to ${state.fileName}` : `Save as a ${FILE_EXTENSION} project file`} (${shortcut('Mod+S')})`} onClick={() => void savePiece()}>Save</button>
       </div>

@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent } from 'react'
+import { useEffect, useEffectEvent, useState } from 'react'
+import { ExportDialog } from './components/ExportDialog.tsx'
 import { Icon } from './components/Icon.tsx'
 import { Inspector } from './components/Inspector.tsx'
 import { MusicTimeline } from './components/MusicTimeline.tsx'
@@ -27,6 +28,7 @@ function Editor({ state }: { state: OpenState }) {
   const musicMode = view.mode === 'music'
   const motion = useMotion(doc, current)
   const playback = usePlayback(doc)
+  const [exporting, setExporting] = useState(false)
   /** In music mode the stage shows the piece at the playhead. */
   const sample = musicMode ? sampleAt(doc.formations, playback.time) : null
 
@@ -95,6 +97,8 @@ function Editor({ state }: { state: OpenState }) {
   }
 
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    // The export dialog is modal: it handles its own keys.
+    if (exporting) return
     const mod = e.ctrlKey || e.metaKey
     const key = e.key.toLowerCase()
     if (mod && (key === 'z' || key === 'y')) {
@@ -158,7 +162,7 @@ function Editor({ state }: { state: OpenState }) {
   const barsHidden = view.hideBars
   return (
     <div className={`app${barsHidden ? ' bars-hidden' : ''}`}>
-      {!barsHidden && <TopBar state={state} onBeforeReplace={motion.stop} />}
+      {!barsHidden && <TopBar state={state} onBeforeReplace={motion.stop} onExport={() => { motion.stop(); playback.pause(); setExporting(true) }} />}
       <main className="stage-wrap">
         <Stage doc={doc} current={current} positions={sample?.positions ?? motion.positions} selection={selection} view={view}
           moving={sample ? playback.playing || sample.moving : motion.moving} onEditStart={prepareEdit} />
@@ -178,6 +182,7 @@ function Editor({ state }: { state: OpenState }) {
       {!barsHidden && (musicMode
         ? <MusicTimeline doc={doc} current={current} playback={playback} onSelect={goTo} onAdd={addFormation} onMark={mark} />
         : <Timeline doc={doc} current={current} onSelect={goTo} onAdd={addFormation} />)}
+      {exporting && <ExportDialog doc={doc} names={view.names} onClose={() => setExporting(false)} />}
     </div>
   )
 }

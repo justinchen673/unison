@@ -30,6 +30,9 @@ A dance formation planner for teams: put dancers on a stage, build formations, t
 - **Custom paths**: select a dancer and drag the small hollow dot on their path to bend it, as many times as you like. Drag a point to move it, or double-click it to remove it. In the side panel, choose **Smooth** curves or sharp **Corners**, or **Straighten** the path again. Dancers follow their paths when gliding between formations and during music playback. Paths keep their shape when you move a dancer's start or end spot.
 - **Undo/redo** for every change (each opened project starts with a fresh history).
 - **Stage-only view**: the button in the stage's top-right corner (or **F**) hides the top bar, side panel and formation strip so the stage fills the window. Click it again to bring them back.
+- **Export** (top bar → **Export…**):
+  - **PDF**: one page per formation with its name and notes, ready to print or send to dancers.
+  - **Video (MP4)**: the whole piece playing in time with the music (1080p), like pressing Play in music mode. It's made right in the browser, much faster than real time. Video export needs Edge or Chrome (recent Safari and Firefox may work, but might not include sound).
 
 ### Keyboard shortcuts
 
@@ -67,9 +70,10 @@ npm run build    # type-check, then write the single-file app to dist/index.html
 
 ```text
 src/
-  model/        Pure data and logic (no React): types, choreography edits, music timing, file parsing
+  model/        Pure data and logic (no React): types, choreography edits, music timing, custom paths, file parsing
   state/        Editor store with undo/redo, glide between formations, music playback, autosave and file save/open
-  components/   React UI: Stage (SVG), Timeline, MusicTimeline, Inspector, TopBar
+  export/       PDF and MP4 export (canvas drawing, PDF writer, video encoding)
+  components/   React UI: Stage (SVG), Timeline, MusicTimeline, Inspector, TopBar, ExportDialog
 scripts/        Repo tooling (check-private.mjs: scan for personal or private info)
 docs/           Architecture, ArrangeUs research, tech plan and roadmap
 ```
@@ -79,3 +83,4 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture. AI a
 - Stage coordinates are feet from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
 - Saved files are versioned JSON (`"format": "unison", "version": 4`); older versions are migrated when opened (version 1 used meters, version 2 had no timing or music, version 3 had no custom paths).
 - All document changes go through `editor.commit(...)` in `src/state/store.ts`, which is what makes them undoable.
+- Third-party code in the built app: React and React DOM (MIT), and mediabunny (MPL-2.0, used unmodified for writing MP4 videos).

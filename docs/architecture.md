@@ -20,10 +20,11 @@ Unison is a client-only React app for planning dance formations and timing them 
 | Tests | Vitest 5 | Unit tests for model and store code (Node, no DOM). |
 | Lint | Oxlint | Configured in `.oxlintrc.json` (React hooks rules). |
 | Rendering | SVG + Canvas | The stage and thumbnails are plain SVG elements rendered by React; the music waveform is a `<canvas>`. |
-| Audio | Web Audio + `<audio>` | `OfflineAudioContext.decodeAudioData` for the waveform and duration; an `<audio>` element plays the music. No libraries. |
+| Audio | Web Audio + `<audio>` | `OfflineAudioContext.decodeAudioData` for the waveform, duration and video export; an `<audio>` element plays the music. |
+| Export | Canvas + WebCodecs + `mediabunny` | PDFs are canvas-rendered pages in a small built-in PDF writer. Videos are canvas frames encoded by the browser's WebCodecs encoders; `mediabunny` (MPL-2.0) drives the encoders and writes the MP4 file. |
 | Styling | One global stylesheet | `src/index.css`, dark theme driven by CSS variables. |
 
-Runtime dependencies are only `react` and `react-dom`. Everything else is a dev dependency.
+Runtime dependencies are `react`, `react-dom` and `mediabunny` (video export only; it adds about 250 KB to the built file). Everything else is a dev dependency. `mediabunny` is MPL-2.0: fine to bundle unmodified; if you ever modify its source files, those modified files must stay MPL-2.0 and available as source.
 
 ## 2. Repository layout
 
@@ -67,6 +68,10 @@ src/
     useMotion.ts         Hook: short glide between formations (formations mode)
     usePlayback.ts       Hook: music mode playhead, play/pause/seek, audio element
     store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking, close)
+  export/                Export to files (no React): canvas drawing, PDF writer, MP4 encoding
+    render.ts            Draws the stage and dancers on a canvas like Stage.tsx (dark and light themes), text wrapping
+    pdf.ts               PDF export: one canvas-rendered page per formation, minimal PDF writer
+    video.ts             MP4 export: frames of the piece in time + the music, encoded with WebCodecs via mediabunny
   components/            React UI
     Welcome.tsx          Start screen while no project is open: New project / Open project… / recent projects
     TopBar.tsx           App name, project name, save status, Formations | Music mode switch, undo/redo, New/Open/Save as/Save
@@ -75,9 +80,10 @@ src/
     Stage.tsx            SVG stage: grid, wings, dancers, ghosts/paths, drag and box select
     Timeline.tsx         Formations mode bottom bar: prev/next, "Formation N of M", formation strip with thumbnails
     MusicTimeline.tsx    Music mode bottom bar: transport, music file, waveform, draggable formation blocks, playhead
+    ExportDialog.tsx     Export dialog: PDF or MP4, progress, cancel
     Inspector.tsx        Right panel: formation (+ start/end in music mode), selected dancers, dancer list, stage and view options, shortcuts
     Icon.tsx             Inline SVG icons (<Icon name=…>) and the logo
-    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, selection toggle, time formatting
+    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, selection toggle, time formatting, stage drawing scale and label centering (shared by Stage and exports)
 ```
 
 ## 3. Screen layout
@@ -263,6 +269,7 @@ While a project is open, every state change clamps `current` to a valid index an
 - **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. When no project is open, it removes the first two keys instead. Write errors are ignored. **Audio is too big for localStorage** (a few MB at most), so the project is stored there with `music.data` emptied, and the audio itself goes to IndexedDB (key `autosave-music`, value `{ id, data }`) only when the music changes (by `music.id`); removing the music deletes the key.
 - **Startup** (`main.tsx`, which awaits it before the first render): `loadAutosave()` returns the saved project, whether it had unsaved changes (missing flag counts as unsaved), and `lostMusic`; or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. If the saved project had music, its audio is read back from IndexedDB and matched by id. **If that fails** (`lostMusic`), the project comes back without music and marked unsaved, `main.tsx` doesn't re-link its file (so Save can't overwrite the file without its music), and an alert says to reopen the project file. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths`, `hideBars` off; `mode: 'formations'`, any other saved mode value becomes `'formations'`).
 - **Music:** `addMusic()` asks for an audio file (`<input type=file accept="audio/*,.mp3,.m4a,…">`, every browser), turns it into `Music` with `readMusicFile` (rejected with an alert if the browser can't decode it), and commits it as the project's music, replacing any old music. Guarded by `generation`, so music picked for a project that was replaced meanwhile is dropped. `removeMusic()` commits `music: undefined`. Both are undoable.
+- **Exports:** `saveExport(fileName, kind, make)` saves a file made by `make()` (a PDF or MP4 Blob). In Edge and Chrome it asks where to save **first** (`pickExportFile`), because the file window needs a fresh user action and a video takes a while to make, then makes and writes it; if making fails or is cancelled, an empty file created by the file window is removed (a file that already existed is never deleted). Other browsers make it and download it (`downloadBlob`, which keeps the object URL for 60 s so large downloads can start). Returns false if the file window was cancelled. `exportFileName(doc, ext)` is `<project name><ext>`, cleaned like project file names.
 - `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
 
 ### `db.ts`
@@ -276,6 +283,7 @@ While a project is open, every state change clamps `current` to a valid index an
 | `readMusicFile(file)` | Decodes the file (proving the browser can play it, and getting its exact duration), base64-encodes it (`FileReader.readAsDataURL`), and returns `Music` with a new id. Caches the waveform it computed along the way. |
 | `musicPeaks(music)` | Waveform: `Float32Array` of the loudest sample (0–1, all channels) per 1/`PEAKS_PER_SECOND` (100) s. Decoded once per music id and cached as a promise. Decoding uses an `OfflineAudioContext`, which needs no user gesture and plays nothing. |
 | `musicUrl(music)` | Blob URL for an `<audio>` element. Cached per music id for the session (never revoked), so undo/redo between songs is instant. |
+| `decodeMusic(music, sampleRate)` | The music as an `AudioBuffer` resampled to `sampleRate` (not cached; used by video export). |
 
 ### `fileHandles.ts`: save-in-place helpers
 
@@ -285,8 +293,9 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 | --- | --- |
 | `supportsFileHandles` | Both pickers exist. Everything else is only called when this is true. |
 | `pickFileToOpen(ext)`, `pickFileToSave(ext, suggestedName)` | Pickers filtered to `.unison`, sharing picker id `unison-projects` so the browser remembers the last folder. Return `null` when the user cancels. |
+| `pickExportFile(suggestedName, description, mime, ext)` | Save picker for exports (PDF, MP4), with its own picker id `unison-exports` so exports remember a separate folder. |
 | `ensurePermission(handle, mode)` | Checks `'read'` or `'readwrite'` permission and asks the user if needed; returns `false` if refused. |
-| `writeFile(handle, text)` | `ensurePermission(handle, 'readwrite')`, then overwrites the file. Returns `false` if permission was refused. |
+| `writeFile(handle, data)` | `ensurePermission(handle, 'readwrite')`, then overwrites the file with a string or Blob. Returns `false` if permission was refused. |
 | `rememberFile(handle \| null)`, `recallFile()` | Store/load the linked file handle in IndexedDB (`db.ts`, key `current`). Failures are swallowed; the only effect is that Save asks where to save. |
 | `saveRecentProjects(list)`, `loadRecentProjects()` | Store/load the recent-projects list (key `recent`). Failures are swallowed; the list just won't survive a restart. |
 
@@ -345,7 +354,7 @@ flowchart LR
 | Delete / Backspace | Remove selected dancers | |
 | Arrows | With a selection: nudge half a grid square (Shift: a whole square), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
 
-All shortcuts except undo/redo/save/open are ignored while focus is in an `input`, `textarea`, `select` or `contenteditable` element.
+All shortcuts except undo/redo/save/open are ignored while focus is in an `input`, `textarea`, `select` or `contenteditable` element. **All** shortcuts are ignored while the export dialog is open (`exporting` state in `Editor`); the dialog handles Esc itself.
 
 #### Music mode wiring (in `Editor`)
 
@@ -398,11 +407,20 @@ Sections, top to bottom:
 ### `TopBar.tsx`, `OpenMenu.tsx`, `RecentList.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
 
 - `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), the **Recent projects** list when there is one (`App` passes `state.recent`), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
-- `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), the **Formations | Music** mode switch (`aria-pressed` buttons), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
+- `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), the **Formations | Music** mode switch (`aria-pressed` buttons), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), **Export…** (`onExport`: `Editor` stops any glide, pauses playback and opens `ExportDialog`), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
+- `ExportDialog`: modal (backdrop click or Esc closes it, except while exporting) with two options: **Export PDF…** and **Export video…** (disabled with a warning when `canExportVideo` is false). Runs `saveExport` with `exportPdf` or `exportVideo`, shows a progress bar (video adds **Cancel**, which aborts through an `AbortController`), then a status line: saved/downloaded, cancelled, the error, or a note that the video is silent because the browser couldn't encode audio. Names on the stage follow the **Show names** view option.
 - `OpenMenu`: **Open ▾** button with a dropdown containing "Open a file…" (with its Ctrl/⌘+O hint) and the `RecentList`. Closes on choosing an item, clicking outside, or Esc.
 - `RecentList`: one row per recent project (project name, file name underneath); clicking a row calls `openRecent`, the faded **×** calls `forgetRecent`. It stays visible (not hover-only) so it works on touch screens too.
 - `Icon`: inline SVG paths (`prev`, `next`, `plus`, `minus`, `undo`, `redo`, `left`, `right`, `down`, `expand`, `collapse`, `play`, `pause`) rendered with class `glyph`; `Logo` for the brand mark.
-- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`; `formatTime(seconds, digits = 2)` → `m:ss.hh`.
+- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`; `formatTime(seconds, digits = 2)` → `m:ss.hh`; `fontFamily()` (the app font stack, for canvases); `U` (12 drawing units per foot) and `LABEL_SIZE`; `labelOffset(text, size)` (where to put a bold, center-aligned label's baseline so its visible ink is centered on the marker; see Stage). Stage and the exports share these so they look the same.
+
+### Exports (`src/export/`)
+
+Plain modules (no React) that turn the open project into files. Everything runs in the browser, offline, from `file://`.
+
+- **`render.ts`**: `drawStage(ctx, doc, positions, theme, box, names)` draws wings, floor, grid, stage numbers, UPSTAGE/AUDIENCE and the dancers (with optional names) on a 2D canvas, **using the same drawing units, view box margins and sizes as `Stage.tsx`**, scaled to fit and centered in `box` (in the context's current units). Keep the two in sync when changing how the stage looks. Themes: `DARK` (the editor's colors, for video) and `LIGHT` (white paper, for PDF). `wrapLines(ctx, text, width, maxLines)` wraps text for canvases.
+- **`pdf.ts`**: `exportPdf(doc, names, onProgress)` draws one **US Letter landscape** page per formation at **200 dpi** on a canvas: a header (project name, "Formation N of M", the formation's title, and its start–end times when the project has music), the formation on the `LIGHT` stage, and its notes (up to 6 wrapped lines) at the bottom. Each page's RGB pixels are compressed with the browser's `CompressionStream('deflate')` and `buildPdf(pages, title)` writes a minimal PDF 1.4 file (catalog, page tree, info with a UTF-16 title, and per page a content stream drawing one `/FlateDecode` image over the whole page). Rendering pages as images keeps every character (names in any script) exactly as on screen; text isn't selectable. About 100–200 KB per page.
+- **`video.ts`**: `exportVideo(doc, names, onProgress, signal)` makes a **1920×1080, 30 fps MP4** of the piece playing with **music mode timing** (`sampleAt`), from 0 to `pieceLength(doc)` plus one second. Each frame shows the project name, the current formation (or "A → B" during a transition), the time, and the stage on the `DARK` theme. Codecs are picked with mediabunny's `getFirstEncodableVideoCodec` (H.264 first for compatibility, then HEVC, VP9, AV1) and `getFirstEncodableAudioCodec` (AAC, then Opus). The music is decoded at 48 kHz (`decodeMusic`) and added as one `AudioBufferSource`. Frames are drawn on a canvas and added through a `CanvasSource`, awaiting each add for encoder backpressure. Output is `Mp4OutputFormat` with `fastStart: 'in-memory'` (playable while streaming) into a `BufferTarget`. Encoding is much faster than real time (about 3 s for 21 s in Edge). If the abort signal fires, it throws `ExportCancelled` after cancelling the output. Returns `{ blob, silent }`; `silent` means the project has music but no audio codec was available. `canExportVideo` is false when the browser has no `VideoEncoder`.
 
 ### Styling (`index.css`)
 
@@ -440,6 +458,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 - **Storage may be unavailable:** always go through `persistence.ts`, which tolerates `localStorage` failures.
 - **Cross-browser file I/O:** every file feature must work in Safari and Firefox too. The File System Access API (save in place) is only used behind `supportsFileHandles`, with the download / `<input type=file>` fallback for other browsers.
 - **No runtime network access or accounts.**
+- **Feature-detect newer browser APIs.** Video export needs WebCodecs (`canExportVideo`); the dialog explains when it's missing instead of failing. PDF export needs `CompressionStream` (every current browser).
 - **Platform-neutral input:** Ctrl and ⌘ are treated the same; show shortcuts with `shortcut()`.
 
 ## 10. Conventions
@@ -463,8 +482,8 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |
 
-There's no automated UI test suite yet. UI changes should be checked by opening the built `dist/index.html` directly (not just the dev server), because the `file://` constraints only show up there. For music mode, any short audio file works (a WAV generated by a script is enough); check adding it, playback, block dragging, saving (the file contains the audio) and reopening (autosave restores the audio).
+There's no automated UI test suite yet. UI changes should be checked by opening the built `dist/index.html` directly (not just the dev server), because the `file://` constraints only show up there. For music mode, any short audio file works (a WAV generated by a script is enough); check adding it, playback, block dragging, saving (the file contains the audio) and reopening (autosave restores the audio). For exports, check the PDF's structure (header, one page per formation, xref offsets) and look at a decoded page, and load the MP4 in a `<video>` element to check its size, duration and that audio decodes (`webkitAudioDecodedByteCount` in Chromium).
 
 ## 12. Not implemented yet
 
-The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, counts/beats and BPM (music mode works in seconds; there's no beat grid, tap-to-mark or snapping to beats), per-dancer timing within a transition (everyone leaves and arrives together, whatever their path's length), playback speed control, video export, position tools (align, mirror, rotate…), formation presets, path presets (e.g. "arc around"), drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).
+The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, counts/beats and BPM (music mode works in seconds; there's no beat grid, tap-to-mark or snapping to beats), per-dancer timing within a transition (everyone leaves and arrives together, whatever their path's length), playback speed control, position tools (align, mirror, rotate…), formation presets, path presets (e.g. "arc around"), drag-reordering in the strip, props, backgrounds, PNG export, per-dancer PDF sheets, choosing export resolution or page size (PDFs are US Letter, videos 1080p/30 fps), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).

@@ -4,41 +4,13 @@ import { controlPoints, fromStage, pieceMidpoints, route, routeLength, sliceRout
 import { DANCER_RADIUS, WING, clampToFloor, dragOffset, gridLines, isOffstage, shift, snapPoint } from '../model/stage.ts'
 import type { Choreography, Path, Point, Positions } from '../model/types.ts'
 import { editor, type ViewOptions } from '../state/store.ts'
-import { inkFor, toggleId } from './ui.ts'
+import { inkFor, LABEL_SIZE, labelOffset, toggleId, U } from './ui.ts'
 
-/** SVG user units per foot. Drawing at this scale keeps text clear of browser minimum-font-size clamps. */
-const U = 12
 const R = DANCER_RADIUS * U
-/** Label font size by character count, relative to the marker radius. */
-const LABEL_SIZE = [1.25, 1.25, 1.04, 0.83].map((k) => k * R)
 /** Moves shorter than this (feet) count as a click, not a drag. */
 const MIN_MOVE = 0.15
 /** Two presses on a path point within this many milliseconds delete it. */
 const DOUBLE_PRESS_MS = 400
-
-const measurer = document.createElement('canvas').getContext('2d')
-const MEASURE_SIZE = 1000
-/** Label ink offsets per text, as a fraction of the font size. */
-const inkOffsets = new Map<string, Point>()
-/**
- * Where to put a label's alphabetic baseline so its visible glyphs (not its em box) are centered on the marker.
- * Centering on the em box (`dominant-baseline: central`) leaves digits and capitals noticeably low.
- */
-function labelOffset(text: string, size: number): Point {
-  let ratio = inkOffsets.get(text)
-  if (!ratio) {
-    ratio = { x: 0, y: 0.35 }
-    if (measurer) {
-      // Measured at a large size and scaled, because browsers round glyph metrics to whole pixels at small sizes.
-      measurer.font = `700 ${MEASURE_SIZE}px ${getComputedStyle(document.documentElement).fontFamily}`
-      measurer.textAlign = 'center'
-      const m = measurer.measureText(text)
-      ratio = { x: (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2 / MEASURE_SIZE, y: (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2 / MEASURE_SIZE }
-    }
-    inkOffsets.set(text, ratio)
-  }
-  return { x: ratio.x * size, y: ratio.y * size }
-}
 
 type Gesture =
   | { kind: 'drag'; ids: string[]; anchor: string; start: Point; delta: Point }

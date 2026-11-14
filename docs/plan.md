@@ -60,8 +60,8 @@ Verified with unit tests (drag snapping and limits, file parsing, music timing, 
 
 ### Phase 3: rehearsal outputs
 
-- PDF/print with a page per formation and its notes, plus **per-dancer sheets** ("Ava: F3 is 6 ft stage left of center, 3 ft upstage").
-- PNG export of a formation, and video export of playback.
+- ~~PDF/print with a page per formation and its notes~~ (done: Export → PDF), plus **per-dancer sheets** ("Ava: F3 is 6 ft stage left of center, 3 ft upstage").
+- PNG export of a formation. ~~Video export of playback~~ (done: Export → MP4 with the music).
 - A read-only viewer mode to send to dancers.
 
 ### Phase 4: beyond ArrangeUs

@@ -49,6 +49,16 @@ export async function pickFileToSave(extension: string, suggestedName: string): 
   }
 }
 
+/** Asks where to save an exported file (PDF, video…). Exports remember their own folder, separate from projects. Returns null if cancelled. */
+export async function pickExportFile(suggestedName: string, description: string, mime: string, extension: string): Promise<FileSystemFileHandle | null> {
+  try {
+    return await api.showSaveFilePicker!({ id: 'unison-exports', suggestedName, types: [{ description, accept: { [mime]: [extension] } }] })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return null
+    throw error
+  }
+}
+
 /** Makes sure the page may read (and, for 'readwrite', edit) the file, asking the user if needed. Returns false if refused. */
 export async function ensurePermission(handle: FileSystemFileHandle, mode: 'read' | 'readwrite'): Promise<boolean> {
   const h = handle as WritableHandle
@@ -57,10 +67,10 @@ export async function ensurePermission(handle: FileSystemFileHandle, mode: 'read
 }
 
 /** Overwrites the file. Asks the browser for write permission first if needed; returns false if the user refuses. */
-export async function writeFile(handle: FileSystemFileHandle, text: string): Promise<boolean> {
+export async function writeFile(handle: FileSystemFileHandle, data: string | Blob): Promise<boolean> {
   if (!(await ensurePermission(handle, 'readwrite'))) return false
   const writable = await handle.createWritable()
-  await writable.write(text)
+  await writable.write(data)
   await writable.close()
   return true
 }

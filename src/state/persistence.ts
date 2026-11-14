@@ -3,7 +3,7 @@ import { parseChoreography, parseMusic, serialize } from '../model/file.ts'
 import type { Choreography } from '../model/types.ts'
 import { readMusicFile } from './audio.ts'
 import { dbDelete, dbGet, dbPut } from './db.ts'
-import { ensurePermission, loadRecentProjects, pickFileToOpen, pickFileToSave, recallFile, rememberFile, saveRecentProjects, supportsFileHandles, writeFile } from './fileHandles.ts'
+import { ensurePermission, loadRecentProjects, pickExportFile, pickFileToOpen, pickFileToSave, recallFile, rememberFile, saveRecentProjects, supportsFileHandles, writeFile } from './fileHandles.ts'
 import { editor, hasUnsavedChanges, type RecentProject, type ViewOptions } from './store.ts'
 
 const AUTOSAVE_KEY = 'unison.autosave.v1'
@@ -276,12 +276,49 @@ export async function saveAsPiece() {
   }
 }
 
-/** Plain download. The generic binary type stops browsers from appending their own extension, such as `.json`. */
+/** Plain download of the project. The generic binary type stops browsers from appending their own extension, such as `.json`. */
 function download(doc: Choreography, fileName: string) {
-  const url = URL.createObjectURL(new Blob([serialize(doc)], { type: 'application/octet-stream' }))
+  downloadBlob(new Blob([serialize(doc)], { type: 'application/octet-stream' }), fileName)
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
   const link = Object.assign(document.createElement('a'), { href: url, download: fileName })
   document.body.append(link)
   link.click()
   link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  // Generous, so large exports finish handing over to the download before the URL goes away.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+export interface ExportKind {
+  description: string
+  mime: string
+  extension: string
+}
+
+/** `<project name><extension>`, for exported files. */
+export const exportFileName = (doc: Choreography, extension: string) => `${baseName(doc)}${extension}`
+
+/**
+ * Saves an exported file made by `make`. Edge and Chrome first ask where to save it (while the click still counts as
+ * a user action, which the file window requires), then make and write it; other browsers make it and download it.
+ * Returns false if the user cancelled the file window. Errors from `make` (including cancelling) are rethrown.
+ */
+export async function saveExport(fileName: string, kind: ExportKind, make: () => Promise<Blob>): Promise<boolean> {
+  if (!supportsFileHandles) {
+    downloadBlob(await make(), fileName)
+    return true
+  }
+  const file = await pickExportFile(fileName, kind.description, kind.mime, kind.extension)
+  if (!file) return false
+  const existed = (await file.getFile()).size > 0
+  try {
+    if (!(await writeFile(file, await make()))) throw new Error(`Unison wasn't allowed to write "${file.name}".`)
+  } catch (error) {
+    // The file window already created an empty file; don't leave it behind (but never delete a file that was there).
+    if (!existed) await (file as FileSystemFileHandle & { remove?: () => Promise<void> }).remove?.().catch(() => {})
+    throw error
+  }
+  return true
 }

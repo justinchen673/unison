@@ -41,6 +41,9 @@ function fromBase64(data: string): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
+/** Decodes the music at `sampleRate` (resampling if needed), e.g. to encode it into a video. */
+export const decodeMusic = (music: Music, sampleRate: number) => new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(fromBase64(music.data).buffer)
+
 /** Waveform peaks by music id, so each song is decoded only once. */
 const peakCache = new Map<string, Promise<Float32Array>>()
 
