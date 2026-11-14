@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, removeFormation, updateDancers, updateFormation } from '../model/choreography.ts'
 import { MAX_GRID, MAX_STAGE, MIN_GRID, MIN_STAGE, clamp, gridSize, snapStep } from '../model/stage.ts'
+import { retime } from '../model/timing.ts'
 import type { StageSize } from '../model/types.ts'
-import { editor, type OpenState, type ViewOptions } from '../state/store.ts'
+import { editor, type OpenState } from '../state/store.ts'
 import { supportsFileHandles } from '../state/fileHandles.ts'
 import { Icon } from './Icon.tsx'
 import { inkFor, shortcut, toggleId } from './ui.ts'
@@ -10,18 +11,25 @@ import { inkFor, shortcut, toggleId } from './ui.ts'
 interface InspectorProps {
   state: OpenState
   onAddFormation: () => void
+  /** Makes formation `index` current (in music mode, also moves the playhead to it). */
+  onSelect: (index: number) => void
 }
 
-export function Inspector({ state, onAddFormation }: InspectorProps) {
+/** Longest piece the timing fields accept, in seconds. */
+const MAX_TIME = 3600
+
+export function Inspector({ state, onAddFormation, onSelect }: InspectorProps) {
   const { doc, current, selection, view } = state
   const formation = doc.formations[current]
+  const next = doc.formations[current + 1]
   const selected = doc.dancers.filter((d) => selection.includes(d.id))
+  const musicMode = view.mode === 'music'
 
   const setFormation = (patch: Parameters<typeof updateFormation>[2], field: string) =>
     editor.commit((d) => updateFormation(d, current, patch), `${field}:${formation.id}`)
   const moveTo = (index: number) => {
     editor.commit((d) => moveFormation(d, current, index))
-    editor.setCurrent(index)
+    onSelect(index)
   }
   const resize = (patch: Partial<StageSize>, field: string) =>
     editor.commit((d) => ({ ...d, stage: { ...d.stage, ...patch } }), field)
@@ -41,6 +49,24 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
         <Field label="Notes">
           <textarea rows={3} value={formation.notes} placeholder="Counts, cues, reminders…" onChange={(e) => setFormation({ notes: e.target.value }, 'notes')} />
         </Field>
+        {musicMode && (
+          <>
+            <div className="row">
+              <Field label="Starts at (s)">
+                <NumberField value={formation.start} min={0} max={MAX_TIME} step={0.1} commitOnBlur
+                  onChange={(start) => editor.commit((d) => retime(d, current, start, Math.max(start, d.formations[current].end)))} />
+              </Field>
+              <Field label="Ends at (s)">
+                <NumberField value={formation.end} min={0} max={MAX_TIME} step={0.1} commitOnBlur
+                  onChange={(end) => editor.commit((d) => retime(d, current, Math.min(end, d.formations[current].start), end))} />
+              </Field>
+            </div>
+            <p className="hint">
+              Holds for {seconds(formation.end - formation.start)}
+              {next ? `, then ${seconds(next.start - formation.end)} to move to the next formation.` : '. This is the last formation.'}
+            </p>
+          </>
+        )}
         <div className="row">
           <button className="btn icon" title="Move earlier" disabled={current === 0} onClick={() => moveTo(current - 1)}><Icon name="left" /></button>
           <button className="btn icon" title="Move later" disabled={current === doc.formations.length - 1} onClick={() => moveTo(current + 1)}><Icon name="right" /></button>
@@ -118,6 +144,15 @@ export function Inspector({ state, onAddFormation }: InspectorProps) {
           <summary>Keyboard shortcuts</summary>
           <dl className="shortcuts">
             <dt>← →</dt><dd>Previous / next formation</dd>
+            <dt>M</dt><dd>Switch between formations and music mode</dd>
+            {musicMode && (
+              <>
+                <dt>Space</dt><dd>Play / pause</dd>
+                <dt>[ / ]</dt><dd>Start / end the current formation at the playhead</dd>
+                <dt>Home</dt><dd>Playhead to the beginning</dd>
+                <dt>{shortcut('Mod+')}scroll</dt><dd>Zoom the timeline</dd>
+              </>
+            )}
             <dt>F</dt><dd>Hide / show the bars (stage only)</dd>
             <dt>Arrow keys</dt><dd>Nudge selected dancers half a square, {snapStep(doc.stage)} ft (Shift: a whole square, {doc.stage.grid} ft)</dd>
             <dt>Shift+click or drag a box</dt><dd>Select several dancers</dd>
@@ -142,19 +177,34 @@ function Field({ label, className = '', children }: { label: string; className?:
   )
 }
 
-/** Number input that can be cleared and retyped; the piece only updates while the text is a valid number. */
-function NumberField({ value, min, max, step, onChange }: { value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
+/**
+ * Number input that can be cleared and retyped; the piece only updates while the text is a valid number. With
+ * `commitOnBlur` it updates only on Enter or leaving the field, so half-typed values never take effect.
+ */
+function NumberField({ value, min, max, step, commitOnBlur = false, onChange }: { value: number; min: number; max: number; step: number; commitOnBlur?: boolean; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null)
+  const apply = (input: HTMLInputElement) => {
+    if (input.value !== '' && Number.isFinite(input.valueAsNumber)) onChange(clamp(input.valueAsNumber, min, max))
+  }
   return (
-    <input type="number" min={min} max={max} step={step} value={draft ?? String(value)} onBlur={() => setDraft(null)}
+    <input type="number" min={min} max={max} step={step} value={draft ?? String(value)}
+      onBlur={(e) => {
+        if (commitOnBlur && draft !== null) apply(e.currentTarget)
+        setDraft(null)
+      }}
+      onKeyDown={(e) => {
+        if (commitOnBlur && e.key === 'Enter') e.currentTarget.blur()
+      }}
       onChange={(e) => {
         setDraft(e.target.value)
-        if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) onChange(clamp(e.target.valueAsNumber, min, max))
+        if (!commitOnBlur) apply(e.target)
       }} />
   )
 }
 
-function Toggle({ view, option, children }: { view: ViewOptions; option: keyof ViewOptions; children: ReactNode }) {
+const seconds = (t: number) => `${Number(t.toFixed(2))} s`
+
+function Toggle({ view, option, children }: { view: OpenState['view']; option: 'snap' | 'names' | 'prevPaths' | 'nextPaths'; children: ReactNode }) {
   return (
     <label className="toggle">
       <input type="checkbox" checked={view[option]} onChange={(e) => editor.setView({ [option]: e.target.checked })} />

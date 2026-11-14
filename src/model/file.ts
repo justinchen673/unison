@@ -1,6 +1,7 @@
 import { PALETTE, createFormation, lineUp, uid } from './choreography.ts'
 import { DEFAULT_STAGE, FEET_PER_METER, MAX_STAGE, MIN_STAGE, clamp, gridSize, tidy } from './stage.ts'
-import type { Choreography, Dancer, Formation, Point } from './types.ts'
+import { GAP, HOLD, roundTime } from './timing.ts'
+import type { Choreography, Dancer, Formation, Music, Point } from './types.ts'
 
 export const serialize = (doc: Choreography) => JSON.stringify(doc, null, 2)
 
@@ -9,10 +10,18 @@ const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null 
 const isPoint = (v: unknown): v is Point => isObject(v) && Number.isFinite(v.x) && Number.isFinite(v.y)
 const text = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback)
 const objects = (v: unknown) => (Array.isArray(v) ? v.filter(isObject) : [])
+const seconds = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? roundTime(v) : undefined)
+
+/** Reads embedded music; anything without audio data is ignored. */
+export function parseMusic(v: unknown): Music | undefined {
+  if (!isObject(v) || typeof v.data !== 'string' || !v.data) return undefined
+  return { id: typeof v.id === 'string' && v.id ? v.id : uid(), name: text(v.name, 'Music'), type: text(v.type, 'audio/mpeg'), duration: seconds(v.duration) ?? 0, data: v.data }
+}
 
 /**
  * Reads a saved piece, filling in anything missing so hand-edited or partially broken files still open.
- * Version 1 files measured the stage in meters; they are converted to feet.
+ * Version 1 files measured the stage in meters; they are converted to feet. Formations without timing (versions 1
+ * and 2) get default blocks, and overlapping blocks are pushed apart.
  */
 export function parseChoreography(json: string): Choreography {
   let raw: unknown
@@ -22,7 +31,7 @@ export function parseChoreography(json: string): Choreography {
     throw new Error('The file is not valid JSON.')
   }
   if (!isObject(raw) || raw.format !== 'unison') throw new Error('This is not a Unison file.')
-  if (raw.version !== 1 && raw.version !== 2) throw new Error(`Unsupported Unison file version: ${String(raw.version)}.`)
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) throw new Error(`Unsupported Unison file version: ${String(raw.version)}. It may need a newer copy of Unison.`)
   const scale = raw.version === 1 ? FEET_PER_METER : 1
   const size = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? clamp(Math.round(v * scale), MIN_STAGE, MAX_STAGE) : fallback)
 
@@ -50,9 +59,12 @@ export function parseChoreography(json: string): Choreography {
       return [d.id, isPoint(p) ? { x: tidy(p.x * scale), y: tidy(p.y * scale) } : (previous?.[d.id] ?? lined[i])]
     }))
     const id = typeof f.id === 'string' && !formations.some((x) => x.id === f.id) ? f.id : uid()
-    formations.push({ id, name: text(f.name, ''), positions, notes: text(f.notes, '') })
+    const previousEnd = formations.at(-1)?.end
+    const start = Math.max(seconds(f.start) ?? (previousEnd === undefined ? 0 : previousEnd + GAP), previousEnd ?? 0)
+    formations.push({ id, name: text(f.name, ''), positions, notes: text(f.notes, ''), start, end: Math.max(seconds(f.end) ?? start + HOLD, start) })
   }
   if (!formations.length) formations.push(createFormation('', Object.fromEntries(dancers.map((d, i) => [d.id, lined[i]]))))
 
-  return { format: 'unison', version: 2, name: text(raw.name, 'Untitled piece'), stage, dancers, formations }
+  const music = parseMusic(raw.music)
+  return { format: 'unison', version: 3, name: text(raw.name, 'Untitled piece'), stage, dancers, formations, ...(music && { music }) }
 }

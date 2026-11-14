@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createChoreography } from '../model/choreography.ts'
 import { editor, hasUnsavedChanges } from './store.ts'
 
-const view = { snap: true, names: true, prevPaths: true, nextPaths: false, hideBars: false }
+const view = { snap: true, names: true, prevPaths: true, nextPaths: false, hideBars: false, mode: 'formations' as const }
 const rename = (name: string) => editor.commit((d) => ({ ...d, name }))
 
 describe('editor store', () => {

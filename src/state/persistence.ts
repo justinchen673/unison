@@ -1,6 +1,8 @@
 import { createChoreography } from '../model/choreography.ts'
-import { parseChoreography, serialize } from '../model/file.ts'
+import { parseChoreography, parseMusic, serialize } from '../model/file.ts'
 import type { Choreography } from '../model/types.ts'
+import { readMusicFile } from './audio.ts'
+import { dbDelete, dbGet, dbPut } from './db.ts'
 import { ensurePermission, loadRecentProjects, pickFileToOpen, pickFileToSave, recallFile, rememberFile, saveRecentProjects, supportsFileHandles, writeFile } from './fileHandles.ts'
 import { editor, hasUnsavedChanges, type RecentProject, type ViewOptions } from './store.ts'
 
@@ -8,9 +10,11 @@ const AUTOSAVE_KEY = 'unison.autosave.v1'
 /** '0' when the autosaved project matches its file, '1' when it has unsaved changes. */
 const UNSAVED_KEY = 'unison.unsaved.v1'
 const VIEW_KEY = 'unison.view.v1'
+/** IndexedDB key for the autosaved project's audio ({ id, data }), which is too big for localStorage. */
+const MUSIC_KEY = 'autosave-music'
 /** Project files are the JSON from `serialize`, saved with this extension. */
 export const FILE_EXTENSION = '.unison'
-const DEFAULT_VIEW: ViewOptions = { snap: true, names: true, prevPaths: true, nextPaths: false, hideBars: false }
+const DEFAULT_VIEW: ViewOptions = { snap: true, names: true, prevPaths: true, nextPaths: false, hideBars: false, mode: 'formations' }
 
 /** Whether browser storage works here; some browsers restrict it for pages opened from file://. */
 export const canAutosave = (() => {
@@ -23,10 +27,21 @@ export const canAutosave = (() => {
   }
 })()
 
-export function loadAutosave(): { doc: Choreography; unsaved: boolean } | null {
+/**
+ * The project autosaved by the last session. Its audio is restored from IndexedDB; if that fails (`lostMusic`), the
+ * project comes back without music and counts as unsaved.
+ */
+export async function loadAutosave(): Promise<{ doc: Choreography; unsaved: boolean; lostMusic: boolean } | null> {
   try {
     const json = localStorage.getItem(AUTOSAVE_KEY)
-    return json ? { doc: parseChoreography(json), unsaved: localStorage.getItem(UNSAVED_KEY) !== '0' } : null
+    if (!json) return null
+    const doc = parseChoreography(json)
+    const unsaved = localStorage.getItem(UNSAVED_KEY) !== '0'
+    const saved = JSON.parse(json).music as Record<string, unknown> | undefined
+    if (!saved) return { doc, unsaved, lostMusic: false }
+    const audio = (await dbGet(MUSIC_KEY).catch(() => null)) as { id?: unknown; data?: unknown } | null
+    const music = audio && audio.id === saved.id ? parseMusic({ ...saved, data: audio.data }) : undefined
+    return music ? { doc: { ...doc, music }, unsaved, lostMusic: false } : { doc, unsaved: true, lostMusic: true }
   } catch {
     return null
   }
@@ -34,15 +49,20 @@ export function loadAutosave(): { doc: Choreography; unsaved: boolean } | null {
 
 export function loadView(): ViewOptions {
   try {
-    return { ...DEFAULT_VIEW, ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') }
+    const view: ViewOptions = { ...DEFAULT_VIEW, ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') }
+    return { ...view, mode: view.mode === 'music' ? 'music' : 'formations' }
   } catch {
     return DEFAULT_VIEW
   }
 }
 
-/** Mirrors the open project, whether it has unsaved changes, and view options into localStorage shortly after each change. */
+/**
+ * Mirrors the open project, whether it has unsaved changes, and view options into localStorage shortly after each
+ * change. The audio goes to IndexedDB instead, and only when the music changes.
+ */
 export function startAutosave() {
   let { doc, savedDoc, view } = editor.get()
+  let musicId = doc?.music?.id
   let timer = 0
   editor.subscribe(() => {
     const latest = editor.get()
@@ -52,9 +72,14 @@ export function startAutosave() {
     view = latest.view
     clearTimeout(timer)
     timer = window.setTimeout(() => {
+      const music = doc?.music
+      if (music?.id !== musicId) {
+        musicId = music?.id
+        void (music ? dbPut(MUSIC_KEY, { id: music.id, data: music.data }) : dbDelete(MUSIC_KEY)).catch(() => {})
+      }
       try {
         if (doc) {
-          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(doc))
+          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(music ? { ...doc, music: { ...music, data: '' } } : doc))
           localStorage.setItem(UNSAVED_KEY, doc === savedDoc ? '0' : '1')
         } else {
           localStorage.removeItem(AUTOSAVE_KEY)
@@ -120,10 +145,10 @@ export function newPiece() {
   replaceProject(createChoreography(count), null, false)
 }
 
-function pickTextFile(): Promise<string | null> {
+function pickFile(accept: string): Promise<File | null> {
   return new Promise((resolve) => {
-    const input = Object.assign(document.createElement('input'), { type: 'file', accept: FILE_EXTENSION })
-    input.addEventListener('change', () => resolve(input.files?.[0]?.text() ?? null))
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept })
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null))
     input.addEventListener('cancel', () => resolve(null))
     input.click()
   })
@@ -140,13 +165,28 @@ export async function openPiece() {
       replaceProject(doc, file, true)
       void addRecent(file, doc.name)
     } else {
-      const json = await pickTextFile()
-      if (json !== null) replaceProject(parseChoreography(json), null, true)
+      const file = await pickFile(FILE_EXTENSION)
+      if (file) replaceProject(parseChoreography(await file.text()), null, true)
     }
   } catch (error) {
     alert(`Couldn't open that file. ${errorText(error)}`)
   }
 }
+
+/** Asks for an audio file and embeds it in the open project as its music (replacing any music it had). */
+export async function addMusic() {
+  const file = await pickFile('audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac')
+  if (!file) return
+  const startedAt = generation
+  try {
+    const music = await readMusicFile(file)
+    if (generation === startedAt) editor.commit((d) => ({ ...d, music }))
+  } catch {
+    alert(`Couldn't play "${file.name}" in this browser. Try an MP3, M4A or WAV file.`)
+  }
+}
+
+export const removeMusic = () => editor.commit((d) => ({ ...d, music: undefined }))
 
 const RECENT_LIMIT = 8
 

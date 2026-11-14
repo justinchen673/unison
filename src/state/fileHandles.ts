@@ -1,5 +1,6 @@
 // Save-in-place support through the browser's File System Access API (Edge and Chrome only).
 // The API isn't in TypeScript's DOM types yet, so the few pieces used are typed here.
+import { dbDelete, dbGet, dbPut } from './db.ts'
 import type { RecentProject } from './store.ts'
 
 interface PickerOptions {
@@ -66,29 +67,12 @@ export async function writeFile(handle: FileSystemFileHandle, text: string): Pro
 
 // The linked file and the recent-projects list are kept in IndexedDB (file handles can't go in localStorage), so they
 // survive a browser restart.
-const DB = 'unison'
-const STORE = 'files'
 const KEY = 'current'
 const RECENT_KEY = 'recent'
 
-function withStore(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB, 1)
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE)
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => {
-      const db = request.result
-      const op = run(db.transaction(STORE, mode).objectStore(STORE))
-      op.onsuccess = () => resolve(op.result)
-      op.onerror = () => reject(op.error)
-      op.transaction!.oncomplete = () => db.close()
-    }
-  })
-}
-
 export async function rememberFile(handle: FileSystemFileHandle | null): Promise<void> {
   try {
-    await withStore('readwrite', (store) => (handle ? store.put(handle, KEY) : store.delete(KEY)))
+    await (handle ? dbPut(KEY, handle) : dbDelete(KEY))
   } catch {
     // Not remembering the file only means the next Save after a restart asks where to save.
   }
@@ -96,7 +80,7 @@ export async function rememberFile(handle: FileSystemFileHandle | null): Promise
 
 export async function recallFile(): Promise<FileSystemFileHandle | null> {
   try {
-    return ((await withStore('readonly', (store) => store.get(KEY))) as FileSystemFileHandle | undefined) ?? null
+    return ((await dbGet(KEY)) as FileSystemFileHandle | undefined) ?? null
   } catch {
     return null
   }
@@ -104,7 +88,7 @@ export async function recallFile(): Promise<FileSystemFileHandle | null> {
 
 export async function saveRecentProjects(list: RecentProject[]): Promise<void> {
   try {
-    await withStore('readwrite', (store) => store.put(list, RECENT_KEY))
+    await dbPut(RECENT_KEY, list)
   } catch {
     // The list just won't survive a restart.
   }
@@ -112,7 +96,7 @@ export async function saveRecentProjects(list: RecentProject[]): Promise<void> {
 
 export async function loadRecentProjects(): Promise<RecentProject[]> {
   try {
-    const list = await withStore('readonly', (store) => store.get(RECENT_KEY))
+    const list = await dbGet(RECENT_KEY)
     return Array.isArray(list) ? list.filter((e) => e?.handle && typeof e.projectName === 'string') : []
   } catch {
     return []

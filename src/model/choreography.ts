@@ -1,4 +1,5 @@
 import { DEFAULT_STAGE, gridLines } from './stage.ts'
+import { GAP, HOLD, defaultStart, roundTime, shiftFrom } from './timing.ts'
 import type { Choreography, Dancer, Formation, Point, Positions, StageSize } from './types.ts'
 
 export const PALETTE = ['#f87171', '#fb923c', '#facc15', '#a3e635', '#34d399', '#22d3ee', '#60a5fa', '#818cf8', '#c084fc', '#f472b6', '#e2e8f0', '#a8a29e']
@@ -14,8 +15,8 @@ export function createDancer(index: number): Dancer {
   return { id: uid(), name: `Dancer ${index + 1}`, label: String(index + 1), color: PALETTE[index % PALETTE.length] }
 }
 
-export function createFormation(name: string, positions: Positions): Formation {
-  return { id: uid(), name, positions, notes: '' }
+export function createFormation(name: string, positions: Positions, start = 0): Formation {
+  return { id: uid(), name, positions, notes: '', start, end: start + HOLD }
 }
 
 /** Centered rows of dancers, as spread out as fits across the stage: 6 or 4 ft apart, else 2 ft apart in rows. */
@@ -35,7 +36,7 @@ const byDancer = (dancers: Dancer[], points: Point[]): Positions => Object.fromE
 export function createChoreography(dancerCount: number): Choreography {
   const stage = { ...DEFAULT_STAGE }
   const dancers = Array.from({ length: dancerCount }, (_, i) => createDancer(i))
-  return { format: 'unison', version: 2, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
+  return { format: 'unison', version: 3, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
 }
 
 /** Sample project with named dancers and several formations, used by unit tests (the app never loads it). */
@@ -51,9 +52,9 @@ export function createDemo(): Choreography {
     dancers,
     formations: [
       opening,
-      createFormation('V', at([[-15, -6], [-9, -2], [-3, 3], [3, 3], [9, -2], [15, -6]])),
-      createFormation('Circle', at([[-4, -7], [-8, 0], [-4, 7], [4, 7], [8, 0], [4, -7]])),
-      createFormation('Exit to wings', at([[-23, -6], [-23, 0], [-23, 6], [23, 6], [23, 0], [23, -6]])),
+      createFormation('V', at([[-15, -6], [-9, -2], [-3, 3], [3, 3], [9, -2], [15, -6]]), defaultStart(1)),
+      createFormation('Circle', at([[-4, -7], [-8, 0], [-4, 7], [4, 7], [8, 0], [4, -7]]), defaultStart(2)),
+      createFormation('Exit to wings', at([[-23, -6], [-23, 0], [-23, 6], [23, 6], [23, 0], [23, -6]]), defaultStart(3)),
     ],
   }
 }
@@ -98,10 +99,18 @@ export function removeDancers(doc: Choreography, ids: string[]): Choreography {
   }
 }
 
-/** Inserts a copy of formation `index` right after it, like ArrangeUs' "Add formation". */
-export function duplicateFormation(doc: Choreography, index: number): Choreography {
-  const copy = { ...doc.formations[index], id: uid(), name: '', notes: '' }
-  return { ...doc, formations: [...doc.formations.slice(0, index + 1), copy, ...doc.formations.slice(index + 1)] }
+/**
+ * Inserts a copy of formation `index` right after it, like ArrangeUs' "Add formation". The copy's block starts at
+ * `start` (default: a GAP after the original ends) and lasts HOLD seconds; later formations move later only if they
+ * would otherwise begin less than a GAP after it.
+ */
+export function duplicateFormation(doc: Choreography, index: number, start?: number): Choreography {
+  const original = doc.formations[index]
+  const s = roundTime(Math.max(start ?? original.end + GAP, original.end))
+  const copy = { ...original, id: uid(), name: '', notes: '', start: s, end: s + HOLD }
+  const next = doc.formations[index + 1]
+  const inserted = { ...doc, formations: [...doc.formations.slice(0, index + 1), copy, ...doc.formations.slice(index + 1)] }
+  return next ? shiftFrom(inserted, index + 2, copy.end + GAP - next.start) : inserted
 }
 
 export function removeFormation(doc: Choreography, index: number): Choreography {
@@ -112,5 +121,6 @@ export function moveFormation(doc: Choreography, from: number, to: number): Chor
   if (from === to || to < 0 || to >= doc.formations.length) return doc
   const formations = [...doc.formations]
   formations.splice(to, 0, ...formations.splice(from, 1))
-  return { ...doc, formations }
+  // Formations swap places but the time slots stay put, so the piece still lines up with the music.
+  return { ...doc, formations: formations.map((f, i) => ({ ...f, start: doc.formations[i].start, end: doc.formations[i].end })) }
 }

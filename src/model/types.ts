@@ -24,6 +24,26 @@ export interface Formation {
   name: string
   positions: Positions
   notes: string
+  /**
+   * Music mode timing, in seconds from the start of the piece: dancers hold this formation from `start` to `end`, then
+   * move during the gap until the next formation's `start`. Formations never overlap: start ≤ end ≤ next start.
+   */
+  start: number
+  end: number
+}
+
+/** An audio file embedded in the project so it travels with the .unison file. */
+export interface Music {
+  /** Random id; lets autosave match the audio it keeps separately in IndexedDB. */
+  id: string
+  /** Original file name. */
+  name: string
+  /** MIME type, such as audio/mpeg. */
+  type: string
+  /** Length in seconds. */
+  duration: number
+  /** The audio file, base64-encoded. */
+  data: string
 }
 
 /** Size of the performance area (offstage wings are added on both sides) and of the grid squares, all in feet. */
@@ -36,10 +56,11 @@ export interface StageSize {
 
 export interface Choreography {
   format: 'unison'
-  /** 2 = feet. Version 1 files measured in meters and are converted when opened. */
-  version: 2
+  /** 3 added formation timing and music. Version 2 files get default timing; version 1 files (meters) are also converted to feet. */
+  version: 3
   name: string
   stage: StageSize
   dancers: Dancer[]
   formations: Formation[]
+  music?: Music
 }

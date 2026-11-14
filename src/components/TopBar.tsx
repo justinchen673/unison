@@ -13,6 +13,7 @@ interface TopBarProps {
 
 export function TopBar({ state, onBeforeReplace }: TopBarProps) {
   const unsaved = hasUnsavedChanges(state)
+  const { mode } = state.view
   return (
     <header className="topbar">
       <button className="brand" title="Close this project and go back to the start screen" onClick={() => { onBeforeReplace(); closeProject() }}><Logo />Unison</button>
@@ -20,6 +21,10 @@ export function TopBar({ state, onBeforeReplace }: TopBarProps) {
       <span className={`save-status${unsaved ? ' unsaved' : ''}`} title={state.fileName ? `Save writes to ${state.fileName}` : undefined}>
         {unsaved ? 'Unsaved changes' : state.fileName ? `Saved to ${state.fileName}` : 'Saved'}
       </span>
+      <div className="mode-switch" role="group" aria-label="Mode">
+        <button aria-pressed={mode === 'formations'} title="Arrange formations, without timing (M)" onClick={() => editor.setView({ mode: 'formations' })}>Formations</button>
+        <button aria-pressed={mode === 'music'} title="Time formations to music (M)" onClick={() => editor.setView({ mode: 'music' })}>Music</button>
+      </div>
       {!canAutosave && <span className="warn">Autosave is unavailable in this browser. Use Save to keep your work.</span>}
       <div className="actions">
         <button className="btn icon" title={`Undo (${shortcut('Mod+Z')})`} disabled={!state.past.length} onClick={() => editor.undo()}><Icon name="undo" /></button>

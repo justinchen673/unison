@@ -4,7 +4,7 @@ This is the complete map of how Unison is built. It must always match the code. 
 
 ## 1. What it is and how it runs
 
-Unison is a client-only React app for planning dance formations. There's no server, no account, and no network access at runtime.
+Unison is a client-only React app for planning dance formations and timing them to music. There's no server, no account, and no network access at runtime.
 
 - **Build output:** `npm run build` type-checks, then Vite bundles everything into a single self-contained file, `dist/index.html` (all JS and CSS inlined by `vite-plugin-singlefile`, `base: './'`).
 - **Running it:** users double-click `dist/index.html`. It runs from `file://` in Edge, Chrome, Safari and Firefox on Windows and macOS. This is the core product requirement; see the [file:// constraints](#9-hard-constraints) below.
@@ -19,7 +19,8 @@ Unison is a client-only React app for planning dance formations. There's no serv
 | Build | Vite 8 + `@vitejs/plugin-react` + `vite-plugin-singlefile` | Configured in `vite.config.ts`. |
 | Tests | Vitest 5 | Unit tests for model and store code (Node, no DOM). |
 | Lint | Oxlint | Configured in `.oxlintrc.json` (React hooks rules). |
-| Rendering | SVG | The stage and thumbnails are plain SVG elements rendered by React. |
+| Rendering | SVG + Canvas | The stage and thumbnails are plain SVG elements rendered by React; the music waveform is a `<canvas>`. |
+| Audio | Web Audio + `<audio>` | `OfflineAudioContext.decodeAudioData` for the waveform and duration; an `<audio>` element plays the music. No libraries. |
 | Styling | One global stylesheet | `src/index.css`, dark theme driven by CSS variables. |
 
 Runtime dependencies are only `react` and `react-dom`. Everything else is a dev dependency.
@@ -45,32 +46,37 @@ scripts/
 .oxlintrc.json           Lint rules
 tsconfig*.json           TypeScript project references (app = src/, node = vite.config.ts)
 src/
-  main.tsx               Entry: restores the autosaved project (if any), starts autosave, restores the file link and recent list, renders <App>
+  main.tsx               Entry: awaits the autosaved project (if any, with its music from IndexedDB), starts autosave, restores the file link and recent list, renders <App>
   App.tsx                Shows Welcome or the Editor (layout shell + global keyboard shortcuts)
   index.css              All styles
   model/                 Pure data + logic. No React, no DOM, no browser APIs except crypto.getRandomValues
-    types.ts             Data types (Choreography, Dancer, Formation, Point, Positions, StageSize)
+    types.ts             Data types (Choreography, Dancer, Formation, Music, Point, Positions, StageSize)
     stage.ts             Stage geometry: snapping, clamping, offstage test, group drag math
     choreography.ts      Factories (new project, sample project for tests) and pure edit functions
-    interpolate.ts       Glide math: easing and blending positions between two formations
+    timing.ts            Music mode timing: where dancers are at a given time, re-timing formations
+    interpolate.ts       Easing and blending positions between two formations (glides and music mode transitions)
     file.ts              Save-file serialize/parse with validation and repair
     *.test.ts            Vitest unit tests, next to the code they test
   state/                 App state and side effects
     store.ts             Global editor store: open project (or none), selection, view options, undo/redo
-    persistence.ts       Autosave (localStorage), New/Open/Save/Save as of .unison project files, unsaved-changes guard
+    persistence.ts       Autosave (localStorage + IndexedDB for audio), New/Open/Save/Save as of .unison files, add/remove music, unsaved-changes guard
     fileHandles.ts       Save in place (Edge/Chrome): file pickers, permissions, writing, linked file + recent list in IndexedDB
-    useMotion.ts         Hook: short glide between formations (requestAnimationFrame)
+    db.ts                Tiny IndexedDB key-value helpers (dbGet/dbPut/dbDelete)
+    audio.ts             Music: reading an audio file into the project, waveform peaks, playable blob URLs
+    useMotion.ts         Hook: short glide between formations (formations mode)
+    usePlayback.ts       Hook: music mode playhead, play/pause/seek, audio element
     store.test.ts        Vitest unit tests for the store (no project open, fresh history on open, unsaved-changes tracking, close)
   components/            React UI
     Welcome.tsx          Start screen while no project is open: New project / Open project… / recent projects
-    TopBar.tsx           App name, project name, save status, undo/redo, New/Open/Save as/Save
+    TopBar.tsx           App name, project name, save status, Formations | Music mode switch, undo/redo, New/Open/Save as/Save
     OpenMenu.tsx         Top-bar "Open ▾" dropdown (Open a file… + recent projects), used once there are recent projects
     RecentList.tsx       List of recent projects (one click to reopen, × to remove), shared by Welcome and OpenMenu
     Stage.tsx            SVG stage: grid, wings, dancers, ghosts/paths, drag and box select
-    Timeline.tsx         Formation navigation (prev/next, "Formation N of M") + formation strip with thumbnails
-    Inspector.tsx        Right panel: formation, selected dancers, dancer list, stage and view options, shortcuts
+    Timeline.tsx         Formations mode bottom bar: prev/next, "Formation N of M", formation strip with thumbnails
+    MusicTimeline.tsx    Music mode bottom bar: transport, music file, waveform, draggable formation blocks, playhead
+    Inspector.tsx        Right panel: formation (+ start/end in music mode), selected dancers, dancer list, stage and view options, shortcuts
     Icon.tsx             Inline SVG icons (<Icon name=…>) and the logo
-    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, selection toggle
+    ui.ts                Small UI helpers: shortcut labels, text color on a swatch, selection toggle, time formatting
 ```
 
 ## 3. Screen layout
@@ -85,19 +91,25 @@ With a project open, `App` renders the editor as a CSS grid (`.app` in `index.cs
 │  Stage (stage)                                │  Inspector    │
 │                                               │  (side, 300px)│
 ├───────────────────────────────────────────────┤               │
-│  Timeline (timeline)                          │               │
+│  Timeline or MusicTimeline (timeline)         │               │
 └───────────────────────────────────────────────┴───────────────┘
 ```
 
-**Stage-only mode** (`view.hideBars`, toggled by the button in the stage's top-right corner or the **F** key): `.app.bars-hidden` collapses the grid to the single `stage` area and the other three regions aren't rendered, so the stage fills the window. The setting is a saved view option, so it survives reopening; the toggle button stays visible to bring the bars back.
+**Two modes** (`view.mode`, switched in the top bar or with **M**):
+
+- **Formations** (default): no time. The bottom bar is `Timeline` (formation strip), and switching formations glides dancers there.
+- **Music**: formations are timed against the music. The bottom bar is `MusicTimeline`, the stage shows the piece **at the playhead**, and the Inspector adds start/end fields. See §7.
+
+**Stage-only mode** (`view.hideBars`, toggled by the button in the stage's top-right corner or the **F** key): `.app.bars-hidden` collapses the grid to the single `stage` area and the other three regions aren't rendered, so the stage fills the window. The setting is a saved view option, so it survives reopening; the toggle button stays visible to bring the bars back. In music mode a play/pause button sits next to it.
 
 ## 4. Data model (`src/model/types.ts`)
 
 ```ts
-Choreography { format: 'unison'; version: 2; name; stage: StageSize; dancers: Dancer[]; formations: Formation[] }
+Choreography { format: 'unison'; version: 3; name; stage: StageSize; dancers: Dancer[]; formations: Formation[]; music?: Music }
 StageSize    { width; depth; grid }           // feet; width/depth = performance area only (wings are extra); grid = side of each grid square
 Dancer       { id; name; label; color }       // label = 1–3 chars drawn in the marker; color = #rrggbb
-Formation    { id; name; positions: Positions; notes }
+Formation    { id; name; positions: Positions; notes; start; end }   // start/end = seconds, music mode only
+Music        { id; name; type; duration; data }   // embedded audio file: name = original file name, type = MIME type, duration = seconds, data = base64
 Positions    = Record<dancerId, Point>
 Point        { x; y }
 ```
@@ -116,7 +128,8 @@ Point        { x; y }
 - Dancer names, labels and colors are **per piece**, not per formation.
 - There's always **at least one** formation.
 - Formation `name` may be empty; the UI shows `Formation N` instead (`formationTitle`).
-- **No time.** A piece is just an ordered list of formations; there are no hold durations, transition durations, playback or music (yet). Older files that stored `hold`/`transition` still open; the fields are dropped.
+- **Timing (music mode):** each formation is a block from `start` to `end` seconds where dancers hold still; they move during the gap until the next formation's `start`. Blocks never overlap and stay in order: `0 ≤ start ≤ end ≤ next.start`. A zero-length block (pass-through) and a zero gap (instant change) are allowed. Formations mode ignores timing, but every edit keeps it valid. Times are rounded to milliseconds.
+- **Music** is optional and embedded in the document (base64), so a `.unison` file is self-contained. It's about a third bigger than the audio file. Music changes (add, replace, remove) are undoable like any edit.
 - Ids come from `uid()` (16 hex chars from `crypto.getRandomValues`). Don't use `crypto.randomUUID`; some browsers don't expose it on `file://`.
 
 ## 5. Model layer (`src/model/`)
@@ -146,32 +159,46 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `PALETTE` | 12 default dancer colors, assigned round-robin. |
 | `uid()` | Random id (see invariants). |
 | `formationTitle(f, i)` | Display name with the `Formation N` fallback. |
-| `createDancer(i)`, `createFormation(name, positions)` | Factories. |
+| `createDancer(i)`, `createFormation(name, positions, start = 0)` | Factories. A new formation's block is `HOLD` (4 s) long from `start`. |
 | `lineUp(count, stage)` | Starting positions: centered rows, 6 ft or 4 ft apart (whichever fits across the stage first), else 2 ft apart in several rows. Spacings are even so everyone lands on whole feet (on the snap grid for the default 2 ft squares). |
-| `createChoreography(n)` | New project: 40 × 24 ft stage, `n` dancers lined up, one formation. |
-| `createDemo()` | Sample project (6 named dancers Ava…Fay, 4 formations: line, V, circle, exit to wings). Used by unit tests; the app never loads it. |
+| `createChoreography(n)` | New project: 40 × 24 ft stage, `n` dancers lined up, one formation (0–4 s), no music. |
+| `createDemo()` | Sample project (6 named dancers Ava…Fay, 4 formations: line, V, circle, exit to wings, timed 0–4, 6–10, 12–16, 18–22 s). Used by unit tests; the app never loads it. |
 | `setPositions(doc, i, updates)` | Merge position updates into formation `i`. |
 | `updateFormation(doc, i, patch)` | Patch `name`, `notes`. |
 | `updateDancers(doc, ids, patch)` | Patch `name`, `label`, `color` on several dancers. |
 | `addDancer(doc, i)` | Adds a dancer at the free grid-line intersection nearest center stage (at least 4 ft from everyone in formation `i`), at that **same spot in every formation**. Returns `{ doc, id }`. |
 | `removeDancers(doc, ids)` | Removes dancers and their positions everywhere. |
-| `duplicateFormation(doc, i)` | Inserts a copy right after `i` (new id, empty name and notes). This is what "+ Formation" and "Duplicate" do. |
-| `removeFormation(doc, i)` | No-op when only one formation is left. |
-| `moveFormation(doc, from, to)` | Reorder; no-op when `to` is out of range. |
+| `duplicateFormation(doc, i, start?)` | Inserts a copy right after `i` (new id, empty name and notes). This is what "+ Formation" and "Duplicate" do. The copy's block starts at `start` (default: `GAP` = 2 s after `i` ends; never before `i` ends) and lasts `HOLD`. Later formations are shifted later (all by the same amount, keeping their spacing) only if the next one would start less than a `GAP` after the copy ends. |
+| `removeFormation(doc, i)` | No-op when only one formation is left. Leaves a gap in time (later formations don't move). |
+| `moveFormation(doc, from, to)` | Reorder; no-op when `to` is out of range. **Time slots stay where they are**: formations swap places, but each position in the order keeps its `start`/`end`, so the piece still lines up with the music. |
+
+### `timing.ts`
+
+Music mode timing. Pure functions over the timing invariants in §4.
+
+| Export | Purpose |
+| --- | --- |
+| `HOLD`, `GAP` | Defaults: 4 s block, 2 s gap. |
+| `roundTime(t)` | Rounds to ms, never below 0. |
+| `defaultStart(i)` | `i × (HOLD + GAP)`: back-to-back default timing. |
+| `sampleAt(formations, t)` | `{ index, positions, moving }` at time `t`: inside a block that formation's positions; in a gap the eased (`ease`) blend toward the next formation (`moving: true`); before the first block the first formation, after the last block the last one. `index` is the formation reached most recently. |
+| `pieceLength(doc)` | Later of the music's end and the last formation's end. Playback stops here. |
+| `earliestStart(doc, i)` | Sum of the lengths of formations before `i`: the earliest `i` can start if everything before it is packed from 0. |
+| `retime(doc, i, start, end)` | Sets formation `i`'s block (start ≥ `earliestStart`, end ≥ start). Neighbors it would overlap are **pushed** out of the way keeping their lengths (later ones later, earlier ones earlier), and the push stops at the first neighbor that doesn't overlap. Returns `doc` unchanged if nothing changes. Used by block drags, the start/end fields and `[`/`]`. |
+| `shiftFrom(doc, i, seconds)` | Moves formations `i…` later by `seconds` (no-op for ≤ 0). |
 
 ### `interpolate.ts`
-
-Used only for the short glide between formations. There's deliberately **no concept of time** in the model: formations are an ordered list of snapshots with no hold or transition durations.
 
 | Export | Purpose |
 | --- | --- |
 | `ease(t)` | Cosine ease-in-out on `[0, 1]`. |
-| `interpolate(from, to, t)` | Per-dancer linear blend (dancers missing from `from` stay at their `to` position). |
+| `interpolate(from, to, t)` | Per-dancer linear blend (dancers missing from `from` stay at their `to` position). Used for the formations mode glide and for music mode transitions. |
 
 ### `file.ts`
 
-- `serialize(doc)`: pretty-printed JSON of the `Choreography` object, as is.
-- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or a `version` other than 1 or 2. **Version 1 files were in meters**: their stage size and positions are multiplied by `FEET_PER_METER` (positions tidied to 3 decimals, stage sizes rounded to whole feet), and the result is version 2. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 6–200 ft (default 40 × 24); the grid square size goes through `gridSize` (default 2 ft when missing, e.g. in files from before the setting existed or version 1 files); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; `hold`/`transition` fields from older files (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation.
+- `serialize(doc)`: pretty-printed JSON of the `Choreography` object, as is (the music's base64 data is one long string).
+- `parseMusic(value)`: validates embedded music; returns `undefined` unless `data` is a non-empty string. Fills in a missing id, name (`Music`), type (`audio/mpeg`) or duration (0).
+- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or a `version` other than 1, 2 or 3 (a newer version says it may need a newer copy of Unison). **Version 1 files were in meters**: their stage size and positions are multiplied by `FEET_PER_METER` (positions tidied to 3 decimals, stage sizes rounded to whole feet). The result is always version 3. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 6–200 ft (default 40 × 24); the grid square size goes through `gridSize` (default 2 ft when missing, e.g. in files from before the setting existed or version 1 files); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; **timing**: a missing or invalid (negative, non-number) `start` defaults to a `GAP` after the previous formation's end (0 for the first), a missing `end` to `start + HOLD`, and overlaps are repaired by moving `start` up to the previous end and `end` up to `start` (so version 1/2 files get back-to-back default blocks); `hold`/`transition` fields from version 1 (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation; `music` goes through `parseMusic` and is omitted when invalid.
 
 ## 6. State layer (`src/state/`)
 
@@ -180,14 +207,14 @@ Used only for the short glide between formations. There's deliberately **no conc
 A single module-level store read in React through `useEditor()` (`useSyncExternalStore`).
 
 ```ts
-EditorState   { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; recent: RecentProject[]; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
+EditorState   { doc: Choreography | null; savedDoc: Choreography | null; fileName: string | null; recent: RecentProject[]; opened: number; current; selection: string[]; view: ViewOptions; past: Snapshot[]; future: Snapshot[] }
 RecentProject { handle: FileSystemFileHandle; projectName }   // project name as of the last open/save of that file
 OpenState   = EditorState & { doc: Choreography }   // narrowed with isOpen(state)
-ViewOptions { snap; names; prevPaths; nextPaths; hideBars }   // hideBars = stage-only mode (see §3)
+ViewOptions { snap; names; prevPaths; nextPaths; hideBars; mode: 'formations' | 'music' }   // hideBars = stage-only mode, mode = see §3
 Snapshot    { doc; current }
 ```
 
-`doc` is `null` until the first project is created or opened (or restored from autosave), and again after the project is closed (clicking the logo).
+`doc` is `null` until the first project is created or opened (or restored from autosave), and again after the project is closed (clicking the logo). `opened` counts `open()` and `close()` calls; `App` uses it as the `Editor`'s React `key`, so per-project screen state (glide, playhead, audio) starts fresh with each project.
 
 **Unsaved changes:** `savedDoc` is the document as last opened from or saved to a file (`null` if it never was). `hasUnsavedChanges(state)` is simply `doc !== savedDoc`. Because documents are immutable, undoing back to the saved version makes the project "saved" again. `fileName` is the name of the linked file Save writes to (Edge/Chrome only; `null` otherwise). `recent` is the recent-projects list (Edge/Chrome only; always empty elsewhere). None of these are part of undo history.
 
@@ -215,9 +242,22 @@ While a project is open, every state change clamps `current` to a valid index an
 - **New / Open** go through `replaceProject`, which updates `linkedFile` (null for New and for fallback Open) and calls `editor.open`. Both first call `okToReplace()`: if the project has unsaved changes, a `confirm` asks before discarding them. New prompts for 1–100 dancers → `createChoreography` (not saved: `savedDoc` is null). Open errors are shown with `alert`.
 - **Close** (`closeProject()`, the top-bar logo): also asks via `okToReplace()`, then unlinks the file (and forgets it in IndexedDB) and calls `editor.close()`. Autosave then removes the saved project from `localStorage`, so reopening the page shows the welcome screen too.
 - **Recent projects (Edge and Chrome):** opening a file, Save and Save as each call `addRecent(file, projectName)`, which moves that file to the top of the list (deduplicated with `isSameEntry`, max 8) and stores the list in IndexedDB. `loadRecent()` (from `main.tsx`) loads it at startup. `openRecent(entry)` reopens a project **without a file window**: after `okToReplace()`, it asks for read-write permission (no prompt within a session where it's already granted; one browser prompt after a restart, which also covers later saves), reads and parses the file, and links it. If the file was moved or deleted, an `alert` says so and the entry is dropped. `forgetRecent(entry)` removes one entry. The reason for this feature: the Windows file dialog itself takes about 1 s to open and another ~0.9 s to close (measured the same for the file-access picker and a plain file input), so skipping it is the only way to make reopening fast.
-- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. When no project is open, it removes the first two keys instead. Write errors are ignored.
-- **Startup:** `loadAutosave()` returns the saved project and whether it had unsaved changes (missing flag counts as unsaved), or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths`, `hideBars` off).
+- **Autosave:** `startAutosave()` subscribes to the store and, 400 ms after the last change to `doc`, `savedDoc` or `view`, writes `localStorage` keys `unison.autosave.v1` (the project, only when one is open), `unison.unsaved.v1` (`'0'` if it matches its file, `'1'` if not) and `unison.view.v1`. When no project is open, it removes the first two keys instead. Write errors are ignored. **Audio is too big for localStorage** (a few MB at most), so the project is stored there with `music.data` emptied, and the audio itself goes to IndexedDB (key `autosave-music`, value `{ id, data }`) only when the music changes (by `music.id`); removing the music deletes the key.
+- **Startup** (`main.tsx`, which awaits it before the first render): `loadAutosave()` returns the saved project, whether it had unsaved changes (missing flag counts as unsaved), and `lostMusic`; or `null` (nothing saved, or unreadable), in which case the welcome screen shows. So whatever project was open last time comes back when the page is reopened, still marked saved or unsaved. If the saved project had music, its audio is read back from IndexedDB and matched by id. **If that fails** (`lostMusic`), the project comes back without music and marked unsaved, `main.tsx` doesn't re-link its file (so Save can't overwrite the file without its music), and an alert says to reopen the project file. `loadView()` merges saved view options over the defaults (`snap`, `names`, `prevPaths` on; `nextPaths`, `hideBars` off; `mode: 'formations'`, any other saved mode value becomes `'formations'`).
+- **Music:** `addMusic()` asks for an audio file (`<input type=file accept="audio/*,.mp3,.m4a,…">`, every browser), turns it into `Music` with `readMusicFile` (rejected with an alert if the browser can't decode it), and commits it as the project's music, replacing any old music. Guarded by `generation`, so music picked for a project that was replaced meanwhile is dropped. `removeMusic()` commits `music: undefined`. Both are undoable.
 - `canAutosave` probes `localStorage` once; when it's unavailable (some browsers on `file://`), `Welcome` and `TopBar` show a warning.
+
+### `db.ts`
+
+`dbGet(key)`, `dbPut(key, value)`, `dbDelete(key)` on IndexedDB database `unison`, object store `files` (named before it held anything but file handles). Each call opens and closes the database. Callers handle errors. Keys: `current` (linked file), `recent` (recent projects), `autosave-music` (autosaved audio).
+
+### `audio.ts`
+
+| Export | Purpose |
+| --- | --- |
+| `readMusicFile(file)` | Decodes the file (proving the browser can play it, and getting its exact duration), base64-encodes it (`FileReader.readAsDataURL`), and returns `Music` with a new id. Caches the waveform it computed along the way. |
+| `musicPeaks(music)` | Waveform: `Float32Array` of the loudest sample (0–1, all channels) per 1/`PEAKS_PER_SECOND` (100) s. Decoded once per music id and cached as a promise. Decoding uses an `OfflineAudioContext`, which needs no user gesture and plays nothing. |
+| `musicUrl(music)` | Blob URL for an `<audio>` element. Cached per music id for the session (never revoked), so undo/redo between songs is instant. |
 
 ### `fileHandles.ts`: save-in-place helpers
 
@@ -229,10 +269,10 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 | `pickFileToOpen(ext)`, `pickFileToSave(ext, suggestedName)` | Pickers filtered to `.unison`, sharing picker id `unison-projects` so the browser remembers the last folder. Return `null` when the user cancels. |
 | `ensurePermission(handle, mode)` | Checks `'read'` or `'readwrite'` permission and asks the user if needed; returns `false` if refused. |
 | `writeFile(handle, text)` | `ensurePermission(handle, 'readwrite')`, then overwrites the file. Returns `false` if permission was refused. |
-| `rememberFile(handle \| null)`, `recallFile()` | Store/load the linked file handle in IndexedDB (database `unison`, store `files`, key `current`). Failures are swallowed; the only effect is that Save asks where to save. |
-| `saveRecentProjects(list)`, `loadRecentProjects()` | Store/load the recent-projects list (same store, key `recent`). Failures are swallowed; the list just won't survive a restart. |
+| `rememberFile(handle \| null)`, `recallFile()` | Store/load the linked file handle in IndexedDB (`db.ts`, key `current`). Failures are swallowed; the only effect is that Save asks where to save. |
+| `saveRecentProjects(list)`, `loadRecentProjects()` | Store/load the recent-projects list (key `recent`). Failures are swallowed; the list just won't survive a restart. |
 
-### `useMotion.ts`: what the stage shows
+### `useMotion.ts`: what the stage shows in formations mode
 
 `useMotion(doc, current)` returns the positions to draw. Internal state is one `Glide` or `null`:
 
@@ -240,6 +280,15 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 - `stop()`: drops any glide immediately (used when the user starts editing, or before New/Open).
 
 Returned values: `positions`, `moving` (a glide is running), `goTo`, `stop`.
+
+### `usePlayback.ts`: the music mode playhead
+
+`usePlayback(doc)` returns `{ time, playing, length, seek, play, pause, toggle }`. `time` is the playhead in seconds (React state, updated every animation frame while playing); `length` is `pieceLength(doc)`.
+
+- **Clock:** while the music is actually playing, the `<audio>` element's `currentTime` is the clock, so the stage stays in sync with what you hear. Otherwise (no music, or past the music's end, or before audio starts) the system clock (`performance.now`) advances from the last known time. Playback stops at `length`; Play at the end starts again from 0.
+- **Audio element:** one per music id, created (and preloaded) when the music appears, from `musicUrl`. Replaced or removed music restarts the playing effect so the new audio is used.
+- `seek(t)` (clamped to ≥ 0; can go past the end so formations can be added there) updates the time, re-anchors the system clock and, while playing, moves the audio too.
+- The hook lives in `Editor`, which is keyed by `state.opened`, so a new project starts at 0 with no audio playing; unmounting pauses the audio.
 
 ## 7. UI layer
 
@@ -251,16 +300,18 @@ flowchart LR
   Model[model/* pure functions] -. used in recipes .-> UI
   Store -- useEditor() --> App
   App -- doc, current --> Motion[useMotion]
-  Motion -- positions to draw --> Stage
-  App --> TopBar & Inspector & Timeline
-  Store -- subscribe --> Autosave[persistence.ts → localStorage]
+  App -- doc --> Playback[usePlayback]
+  Motion -- "positions to draw (formations mode)" --> Stage
+  Playback -- "time → sampleAt (music mode)" --> Stage
+  App --> TopBar & Inspector & Timeline & MusicTimeline
+  Store -- subscribe --> Autosave[persistence.ts → localStorage + IndexedDB]
 ```
 
-`App` is the only component that calls `useEditor()`. It renders `Welcome` when `isOpen(state)` is false, otherwise the internal `Editor` component with an `OpenState`. Editor children get state via props and call `editor.*` methods directly to make changes; `useMotion` lives in `Editor`, so it only runs while a project is open (it still guards against a missing doc).
+`App` is the only component that calls `useEditor()`. It renders `Welcome` when `isOpen(state)` is false, otherwise the internal `Editor` component (keyed by `state.opened`) with an `OpenState`. Editor children get state via props and call `editor.*` methods directly to make changes; `useMotion` and `usePlayback` live in `Editor`, so they only run while a project is open.
 
 ### `App.tsx`
 
-`Editor` wires the four regions together (or only the stage when `view.hideBars` is on; the TopBar, Inspector and Timeline then aren't rendered at all), renders the floating **bars toggle** button in the stage's top-right corner (always visible, so the bars can be brought back), defines `addFormation` (duplicate the current formation, then glide to the copy) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`). The welcome screen has no keyboard shortcuts.
+`Editor` wires the four regions together (or only the stage when `view.hideBars` is on; the TopBar, Inspector and bottom bar then aren't rendered at all), picks the bottom bar by mode (`Timeline` or `MusicTimeline`), renders the floating **bars toggle** button in the stage's top-right corner (always visible, so the bars can be brought back; in music mode with the bars hidden a play/pause button sits next to it), defines `goTo`, `prepareEdit`, `addFormation` and `mark` (see "Music mode wiring" below) and handles global keyboard shortcuts with one `keydown` listener on `window` (via `useEffectEvent`). The welcome screen has no keyboard shortcuts.
 
 | Keys | Action | Notes |
 | --- | --- | --- |
@@ -269,10 +320,22 @@ flowchart LR
 | Ctrl/⌘+A | Select all dancers | Ignored while typing (normal text select-all). |
 | Esc | Clear selection | |
 | F | Hide / show the bars (stage-only mode) | Toggles `view.hideBars`. |
+| M | Switch formations / music mode | Toggles `view.mode`. |
+| Space | Play / pause | Music mode only. `preventDefault` stops it also clicking a focused button. |
+| `[` / `]` | Start / end the current formation at the playhead | Music mode only; `mark(edge)` → `retime`. `[` past the end moves the end too; `]` before the start moves the start too. |
+| Home | Playhead to 0 | Music mode only. |
 | Delete / Backspace | Remove selected dancers | |
 | Arrows | With a selection: nudge half a grid square (Shift: a whole square), clamped like a drag and coalesced into one undo step per selection. Without: ←/→ go to previous/next formation. | |
 
 All shortcuts except undo/redo/save/open are ignored while focus is in an `input`, `textarea`, `select` or `contenteditable` element.
+
+#### Music mode wiring (in `Editor`)
+
+- `usePlayback(doc)` always runs; in music mode the stage draws `sampleAt(doc.formations, playback.time)` instead of `useMotion`'s positions, and guides hide while playing or between blocks.
+- **Playhead → current formation:** whenever the playhead **time** changes (playing, seeking, scrubbing), the formation it's in (`sample.index`) becomes current. Edits that don't move the playhead never change the current formation, so dragging the current formation's block away from the playhead keeps it selected.
+- **Current formation → playhead:** `goTo(i)` (formation buttons, ←/→, clicking a block, the Inspector's move buttons, after adding) makes `i` current and seeks to its `start`. In formations mode `goTo` is `useMotion`'s glide. Entering music mode seeks to the current formation's start; leaving it pauses.
+- `prepareEdit()` (before a stage pointer gesture or a nudge): stops any glide; in music mode also pauses and, if the playhead isn't inside the current formation's block (another formation, or between blocks), seeks to its start, so you always edit what you see.
+- `addFormation()`: in formations mode duplicates the current formation and glides to it. In music mode it pauses and duplicates the formation at the playhead (`sample.index`), starting **at the playhead** if the playhead is past that formation's end, else a `GAP` after it (see `duplicateFormation`), then goes to the copy.
 
 ### `Stage.tsx`
 
@@ -280,40 +343,50 @@ All shortcuts except undo/redo/save/open are ignored while focus is in an `input
 - Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, grid lines every `stage.grid` feet (`gridLines`, center lines dashed), floor border, front-edge stage numbers (distance from center) on every grid line, or on every 2nd/3rd… line when squares are under 2 ft so numbers never sit closer than 2 ft apart, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
 - **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed. The label is **optically centered**: `labelOffset` measures the label's actual glyph bounds with a canvas `measureText` (at 1000 px, then scaled, because browsers round metrics to whole pixels at small sizes; cached per text) and places its alphabetic baseline so the visible ink is centered. Plain `dominant-baseline: central` centers the em box instead and left digits and capitals about 8% of the radius too low.
 - **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and a path line trimmed to the marker edges. Guides are hidden while anything is moving.
-- **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (stops glides). Then:
+- **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (`prepareEdit`). Then:
   - Shift/Ctrl/⌘+click a dancer toggles it in the selection.
   - Pressing a dancer starts a **drag** of the selection (or just that dancer if it isn't selected). While dragging, positions are previewed locally with `dragOffset`; on release the move is committed once (if it moved more than 0.15 ft).
   - Pressing empty space starts a **box select** (added to the current selection when a modifier key is held); dancers inside the box (using the positions on screen) are selected live.
   - The current gesture is kept in both a ref (read by handlers, always fresh) and state (for rendering).
 
-### `Timeline.tsx`
+### `Timeline.tsx` (formations mode)
 
 Navigation row (previous and next formation buttons, "Formation N of M") and a horizontally scrolling strip of formation cards. Each card shows a memoized SVG `Thumbnail`, number, title and a "Has notes" marker; the current card scrolls into view. The last item is the "+ Formation" card.
+
+### `MusicTimeline.tsx` (music mode)
+
+- **Transport row:** Play/Pause, clock (`m:ss.hh / length`), previous/next formation, "Formation N of M", **[ Start here** / **End here ]** (same as `[`/`]`), **+ Formation** (at the playhead), then the music's file name with **Replace…** / **Remove**, or **Add music…** when there's none, and zoom −/+.
+- **Lanes** (one horizontally scrolling box): a time **ruler** (step chosen from 0.5 s…10 min so labels are ≥ 64 px apart), the **waveform**, a row of **formation blocks** (number + title; the current one highlighted) with a dashed line across each gap (time spent moving), and the **playhead** (amber line).
+- **Zoom** is pixels per second (`pps`, 2–400). It starts as "fit": the whole piece plus 8 s (at least 20 s) fits the width. The −/+ buttons zoom around the playhead (or the middle of the view); Ctrl/⌘+scroll zooms around the pointer; plain vertical scrolling scrolls sideways. A layout effect keeps the anchored time under the same screen x after a zoom. The view follows the playhead when it moves out of view (not while dragging or scrubbing).
+- **Waveform:** a `<canvas>` in a `position: sticky` lane as wide as the visible area, redrawn (device-pixel-ratio aware) on scroll, resize and zoom from `musicPeaks`, one column per pixel using the loudest peak in that column's time range. Its color comes from the CSS `color` of `.wave`.
+- **Pointer gestures** (pointer capture on the lanes; presses on the lanes' own scrollbar are ignored):
+  - On empty lane space: **seek**, and keep seeking while dragging (scrubbing).
+  - On a block: it becomes current (without moving the playhead). Releasing without moving (< 3 px) is a click: `onSelect` → seek to its start. Moving drags it: pauses playback, then each move re-times **from the piece as it was when the drag began** (`retime(origin, …)`, so pushed neighbors spring back if you drag back) and commits with a per-drag coalesce key (one undo step). The 6 px **edges** resize (start can't pass end); the body moves the whole block (keeping its length, not before `earliestStart`). Dragged edges **snap to the playhead** within 8 px; when moving, whichever end is nearer snaps.
 
 ### `Inspector.tsx`
 
 Sections, top to bottom:
 
-1. **Formation:** name, notes, move earlier/later, Duplicate, Delete.
+1. **Formation:** name, notes; in music mode **Starts at / Ends at** (seconds, `NumberField` with `commitOnBlur`, then `retime`, which pushes neighbors) and a hint with the hold length and the time to move to the next formation; move earlier/later (via `onSelect`, so music mode follows with the playhead), Duplicate (`onAddFormation`), Delete.
 2. **Selected dancer(s)** (only with a selection): name and label (single selection only), palette swatches and a custom color input, remove.
 3. **Dancers** list (click to select, modifier-click to toggle) and **Add dancer** (adds near center of the current formation and selects them).
 4. **Stage & view:** width/depth (6–200 ft, whole feet), **grid square size** (1–20 ft in half-foot steps, rounded by `gridSize`; one coalesced undo step per edit), and the four view toggles. The shortcut list shows the current nudge sizes.
-5. **Keyboard shortcuts** (collapsible).
+5. **Keyboard shortcuts** (collapsible; music mode adds its keys).
 
-`NumberField` keeps the raw text while typing so a field can be cleared and retyped; it only commits valid, clamped numbers. Text and number edits use coalesce keys so each field edit is one undo step.
+`NumberField` keeps the raw text while typing so a field can be cleared and retyped; it only commits valid, clamped numbers. Normally it commits on every valid keystroke; with `commitOnBlur` (the timing fields) it commits only on Enter or leaving the field, because a half-typed time (e.g. "4" on the way to "45") would push neighbors around. Text and number edits use coalesce keys so each field edit is one undo step.
 
 ### `TopBar.tsx`, `OpenMenu.tsx`, `RecentList.tsx`, `Welcome.tsx`, `Icon.tsx`, `ui.ts`
 
 - `Welcome`: logo, one-line description, **New project** and **Open project…** (same `newPiece`/`openPiece` as the top bar), the **Recent projects** list when there is one (`App` passes `state.recent`), a note that projects save as `.unison` files and the open project is restored next time, and the autosave warning when needed.
-- `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
+- `TopBar`: logo and name (a button: closes the project and returns to the welcome screen via `closeProject`), editable project name, save status (`● Unsaved changes` in amber, otherwise `Saved to <file>` when a file is linked, else `Saved`), the **Formations | Music** mode switch (`aria-pressed` buttons), autosave warning when needed, undo/redo, New, Open (a plain **Open…** button, or the `OpenMenu` dropdown once there are recent projects), Save as… (only when `supportsFileHandles`), Save (tooltip names the linked file). Calls `onBeforeReplace` (stop motion) before New/Open.
 - `OpenMenu`: **Open ▾** button with a dropdown containing "Open a file…" (with its Ctrl/⌘+O hint) and the `RecentList`. Closes on choosing an item, clicking outside, or Esc.
 - `RecentList`: one row per recent project (project name, file name underneath); clicking a row calls `openRecent`, the faded **×** calls `forgetRecent`. It stays visible (not hover-only) so it works on touch screens too.
-- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `undo`, `redo`, `left`, `right`, `down`, `expand`, `collapse`) rendered with class `glyph`; `Logo` for the brand mark.
-- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`.
+- `Icon`: inline SVG paths (`prev`, `next`, `plus`, `minus`, `undo`, `redo`, `left`, `right`, `down`, `expand`, `collapse`, `play`, `pause`) rendered with class `glyph`; `Logo` for the brand mark.
+- `ui.ts`: `shortcut('Mod+Z')` → `⌘Z` on Apple devices or `Ctrl+Z` elsewhere; `inkFor(color)`; `toggleId(ids, id)`; `formatTime(seconds, digits = 2)` → `m:ss.hh`.
 
 ### Styling (`index.css`)
 
-Single dark theme defined by CSS variables on `:root` (`--bg`, `--panel`, `--accent`, `--floor`, …). Classes are plain and global (`.btn`, `.btn.icon`, `.btn.primary`, `.card`, `.field`, …). Button-size class `.btn.icon` and the SVG glyph class `.glyph` are deliberately different names. There's no CSS-in-JS or CSS modules.
+Single dark theme defined by CSS variables on `:root` (`--bg`, `--panel`, `--accent`, `--floor`, …). Classes are plain and global (`.btn`, `.btn.icon`, `.btn.primary`, `.card`, `.field`, …). Button-size class `.btn.icon` and the SVG glyph class `.glyph` are deliberately different names. There's no CSS-in-JS or CSS modules. The music timeline's lane geometry (ruler 18 px, waveform 44 px, blocks below) is in CSS; `WAVE_HEIGHT` in `MusicTimeline.tsx` must match `.wave`'s height.
 
 ## 8. Project file format
 
@@ -322,19 +395,20 @@ A project file (`<name>.unison`) contains `serialize(doc)`, which is plain JSON:
 ```json
 {
   "format": "unison",
-  "version": 2,
+  "version": 3,
   "name": "Spring show",
   "stage": { "width": 40, "depth": 24, "grid": 2 },
   "dancers": [{ "id": "3f9c…", "name": "Ava", "label": "A", "color": "#f87171" }],
   "formations": [
-    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -15, "y": 0 } }, "notes": "" }
-  ]
+    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -15, "y": 0 } }, "notes": "", "start": 0, "end": 4 }
+  ],
+  "music": { "id": "c4d5…", "name": "song.mp3", "type": "audio/mpeg", "duration": 215.3, "data": "SUQzBAAAAAAA…" }
 }
 ```
 
-All lengths are feet. Version history: **1** = meters (converted on open); **2** = feet (current). `stage.grid` was added within version 2 without a bump: files without it simply get the 2 ft default they were already using.
+All lengths are feet; times are seconds. `music` is optional; its `data` is the whole audio file, base64-encoded, so the project file is self-contained (and about a third bigger than the audio). Version history: **1** = meters (converted on open); **2** = feet; **3** = formation `start`/`end` and embedded `music` (current). `stage.grid` was added within version 2 without a bump: files without it simply get the 2 ft default they were already using. Version 3 was a bump because a version 2 app would silently drop the timing and music when re-saving; with the bump it refuses the file instead.
 
-The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON is stored in `localStorage` for autosave. **Any change that this parser couldn't read correctly from an older file (new required fields, renamed fields, changed meaning) must bump `version`** and teach `parseChoreography` to migrate older versions, so existing files and autosaves keep opening. Removing a field that the parser simply ignores in older files (as with the old `hold`/`transition` times) doesn't need a bump.
+The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON (minus the audio data, see §6 autosave) is stored in `localStorage` for autosave. **Any change that this parser couldn't read correctly from an older file (new required fields, renamed fields, changed meaning), or that an older app would lose when re-saving, must bump `version`** and teach `parseChoreography` to migrate older versions, so existing files and autosaves keep opening. Removing a field that the parser simply ignores in older files (as with the old `hold`/`transition` times) doesn't need a bump.
 
 ## 9. Hard constraints
 
@@ -362,13 +436,13 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including dropping old timing fields), formation and dancer edits, store behavior with no project / fresh history on open / unsaved-changes tracking / close. |
+| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including meters conversion, default and repaired timing, embedded music), music mode timing (`sampleAt`, `retime` pushing and clamping), formation and dancer edits (including duplicate/reorder timing), store behavior with no project / fresh history on open / unsaved-changes tracking / close. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |
 
-There's no automated UI test suite yet. UI changes should be checked by opening the built `dist/index.html` directly (not just the dev server), because the `file://` constraints only show up there.
+There's no automated UI test suite yet. UI changes should be checked by opening the built `dist/index.html` directly (not just the dev server), because the `file://` constraints only show up there. For music mode, any short audio file works (a WAV generated by a script is enough); check adding it, playback, block dragging, saving (the file contains the audio) and reopening (autosave restores the audio).
 
 ## 12. Not implemented yet
 
-The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, any notion of time (formation durations, playback, music, counts), curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).
+The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, counts/beats and BPM (music mode works in seconds; there's no beat grid, tap-to-mark or snapping to beats), per-dancer timing within a transition, playback speed control, video export, curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).

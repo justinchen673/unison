@@ -15,6 +15,8 @@ export interface ViewOptions {
   nextPaths: boolean
   /** Hides the top bar, side panel and formation strip so the stage fills the window. */
   hideBars: boolean
+  /** Formations mode arranges formations without timing; music mode times them against the music. */
+  mode: 'formations' | 'music'
 }
 
 /** A project file that was opened or saved before (Edge and Chrome only), shown in the recent-projects lists. */
@@ -33,6 +35,8 @@ export interface EditorState {
   fileName: string | null
   /** Recently opened or saved project files, most recent first. Always empty in browsers without file access. */
   recent: RecentProject[]
+  /** Counts projects opened, created or closed, so per-project screen state (like the playhead) starts fresh. */
+  opened: number
   /** Index of the formation being edited. */
   current: number
   /** Selected dancer ids. */
@@ -68,7 +72,7 @@ function set(patch: Partial<EditorState>) {
 /** Single global editor store. Every document change goes through `commit` so it can be undone. */
 export const editor = {
   init(doc: Choreography | null, view: ViewOptions, savedDoc: Choreography | null = null) {
-    state = { doc, savedDoc, fileName: null, recent: [], current: 0, selection: [], view, past: [], future: [] }
+    state = { doc, savedDoc, fileName: null, recent: [], opened: 0, current: 0, selection: [], view, past: [], future: [] }
   },
   get: () => state,
   subscribe(listener: () => void) {
@@ -92,7 +96,7 @@ export const editor = {
    */
   open(doc: Choreography, fileName: string | null, saved: boolean) {
     coalesceKey = undefined
-    set({ doc, savedDoc: saved ? doc : null, fileName, current: 0, selection: [], past: [], future: [] })
+    set({ doc, savedDoc: saved ? doc : null, fileName, opened: state.opened + 1, current: 0, selection: [], past: [], future: [] })
   },
   /** Records that `doc` was just written to a file (`fileName` is null for a plain download). */
   markSaved(doc: Choreography, fileName: string | null) {
@@ -104,7 +108,7 @@ export const editor = {
   /** Closes the project and returns to the welcome screen. */
   close() {
     coalesceKey = undefined
-    set({ doc: null, savedDoc: null, fileName: null, current: 0, selection: [], past: [], future: [] })
+    set({ doc: null, savedDoc: null, fileName: null, opened: state.opened + 1, current: 0, selection: [], past: [], future: [] })
   },
   setRecent(recent: RecentProject[]) {
     set({ recent })

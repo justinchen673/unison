@@ -4,7 +4,7 @@ Instructions for AI coding agents working on this repository.
 
 ## Project
 
-**Unison** is a free, offline dance formation planner for dance teams: place dancers on a stage, build a sequence of formations, and see how everyone moves between them. For now there's deliberately no notion of time (no durations, playback or music); a piece is just its formations. It's a TypeScript + React app that Vite builds into **one self-contained HTML file** (`dist/index.html`), so anyone can run it by double-clicking the file in a browser on Windows or macOS, with nothing to install and no server. It's modeled on (and aims to improve on) the mobile app ArrangeUs.
+**Unison** is a free, offline dance formation planner for dance teams: place dancers on a stage, build a sequence of formations, and see how everyone moves between them. It has two modes: **formations** mode (no notion of time; a piece is just its formations) and **music** mode (each formation gets a start/end time against a song that's embedded in the project file, with synced playback). It's a TypeScript + React app that Vite builds into **one self-contained HTML file** (`dist/index.html`), so anyone can run it by double-clicking the file in a browser on Windows or macOS, with nothing to install and no server. It's modeled on (and aims to improve on) the mobile app ArrangeUs.
 
 ## NEVER add personal information. Always verify.
 

@@ -13,3 +13,11 @@ export function inkFor(background: string) {
 
 /** Adds `id` to the selection, or removes it if already selected (Shift/Ctrl/⌘+click). */
 export const toggleId = (ids: string[], id: string) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id])
+
+/** Seconds as m:ss.hh (or m:ss with `digits` 0). */
+export function formatTime(seconds: number, digits = 2) {
+  const scale = 10 ** digits
+  const total = Math.round(Math.max(0, seconds) * scale)
+  const minutes = Math.floor(total / (60 * scale))
+  return `${minutes}:${((total % (60 * scale)) / scale).toFixed(digits).padStart(digits ? digits + 3 : 2, '0')}`
+}

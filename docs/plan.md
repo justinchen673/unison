@@ -35,9 +35,9 @@ The complete, always-current architecture lives in [architecture.md](architectur
 
 ## Prototype scope (v0.1, done)
 
-Stage with grid, wings, and numbers · add, remove, and style dancers · drag with snapping, multi-select, and keyboard nudge · add, duplicate, delete, reorder, name, and annotate formations · animated glide between formations · previous and next ghosts with paths · undo/redo · autosave · save and open files. (Formation durations and full playback were in the first prototype but were removed: for now Unison has no notion of time.)
+Stage with grid, wings, and numbers · add, remove, and style dancers · drag with snapping, multi-select, and keyboard nudge · add, duplicate, delete, reorder, name, and annotate formations · animated glide between formations · previous and next ghosts with paths · undo/redo · autosave · save and open files. (Formation durations and full playback were in the first prototype but were removed, then came back as music mode; see Phase 2.)
 
-Verified with unit tests (timeline sampling, drag snapping and limits, file parsing, edits) and an end-to-end run of the built `dist/index.html` over `file://` in Microsoft Edge.
+Verified with unit tests (drag snapping and limits, file parsing, music timing, edits) and an end-to-end run of the built `dist/index.html` over `file://` in Microsoft Edge.
 
 ## Roadmap
 
@@ -53,8 +53,9 @@ Verified with unit tests (timeline sampling, drag snapping and limits, file pars
 
 ### Phase 2: music and counts (the big differentiator)
 
-- Load a song (MP3, M4A, or WAV) and show a waveform timeline with formation blocks.
+- ~~Load a song (MP3, M4A, or WAV) and show a waveform timeline with formation blocks.~~ Done: music mode, with the song embedded in the `.unison` file, draggable/resizable formation blocks that push their neighbors, snapping to the playhead, and synced playback.
 - **Count-based timing**: BPM and first-beat offset (tap tempo, later automatic beat detection), with the timeline labeled in 8-counts and formation changes snapping to counts.
+- Tap-to-mark: tap a key along with the music to set where each formation lands.
 - Trim and start offset, playback speed, and looping a section for rehearsal.
 
 ### Phase 3: rehearsal outputs

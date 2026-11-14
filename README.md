@@ -1,6 +1,6 @@
 # Unison
 
-A dance formation planner for teams: put dancers on a stage, build formations, and watch everyone move between them. It runs in any modern browser on **Windows and macOS**, works offline, and needs **nothing installed** to use.
+A dance formation planner for teams: put dancers on a stage, build formations, time them to your music, and watch everyone move between them. It runs in any modern browser on **Windows and macOS**, works offline, and needs **nothing installed** to use.
 
 > **Status:** early prototype (v0.1). See [docs/plan.md](docs/plan.md) for the tech choices and roadmap, and [docs/research-arrangeus.md](docs/research-arrangeus.md) for the ArrangeUs research behind it.
 
@@ -15,14 +15,17 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
    - **Recent projects (Edge and Chrome):** files you've opened or saved are listed on the welcome screen and under the top bar's **Open ▾** menu. One click reopens a project instantly, without the (slow) file window. After a browser restart, the browser asks once whether Unison may edit that file.
    - **Safari and Firefox:** these browsers don't let pages write to your files, so **Save** downloads a `<project name>.unison` file instead.
 
-> Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Save to a file to be safe.
+> Autosave uses browser storage, which some browsers (notably Safari) may not keep for pages opened from a file. Save to a file to be safe. (Music is kept separately in the browser's database; if it ever can't be restored, Unison tells you to reopen the project file.)
 
 ### What the prototype does
 
 - **Stage** in feet (default 40 × 24 ft) with 6 ft offstage wings (dancers in the wings are dimmed), center lines, upstage/audience labels, and a grid whose **square size you choose** (default 2 ft; under Stage & view). Stage numbers along the front edge follow the grid.
 - **Dancers**: add, remove, rename, set a 1–3 character label and a color. Drag to move (snaps to grid lines and square centers; turn snapping off for free placement). Shift/Ctrl/⌘+click or drag a box to select several dancers and move them together.
-- **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes. There's no timing: a piece is just its sequence of formations.
+- **Formations**: add (starts as a copy of the current one), duplicate, delete, reorder, name, and add notes.
 - **Moving between formations**: click a formation or use ←/→, and the dancers glide to their new spots so you can see who moves where.
+- **Two modes** (switch in the top bar, or press **M**):
+  - **Formations** mode has no timing: a piece is just its sequence of formations.
+  - **Music** mode times the formations to a song. Click **Add music…** to load an MP3 (or M4A, WAV…). The song is **saved inside the `.unison` file**, so sharing the file shares the music too. The bottom bar shows the waveform and a block for each formation: dancers hold still during a block and move during the gap to the next one. Drag a block to move it in time, drag its edges to change when it starts or ends (blocks push their neighbors along, and edges snap to the playhead), or type exact times in the side panel. Press **Space** to play: the stage animates in sync with the music. **+ Formation** adds one at the playhead, and **[** / **]** start or end the current formation at the playhead.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
 - **Undo/redo** for every change (each opened project starts with a fresh history).
 - **Stage-only view**: the button in the stage's top-right corner (or **F**) hides the top bar, side panel and formation strip so the stage fills the window. Click it again to bring them back.
@@ -32,7 +35,12 @@ A dance formation planner for teams: put dancers on a stage, build formations, a
 | Keys | Action |
 | --- | --- |
 | ← / → | Previous / next formation (when no dancer is selected) |
-| F | Hide / show the top bar, side panel and formation strip (stage only) |
+| M | Switch between formations mode and music mode |
+| Space | Play / pause (music mode) |
+| [ / ] | Start / end the current formation at the playhead (music mode) |
+| Home | Playhead to the beginning (music mode) |
+| Ctrl/⌘+scroll | Zoom the music timeline |
+| F | Hide / show the top bar, side panel and bottom bar (stage only) |
 | Arrow keys | Nudge selected dancers half a grid square (Shift: a whole square) |
 | Shift+click, or drag a box | Select several dancers |
 | Ctrl/⌘+A | Select all dancers |
@@ -58,9 +66,9 @@ npm run build    # type-check, then write the single-file app to dist/index.html
 
 ```text
 src/
-  model/        Pure data and logic (no React): types, choreography edits, timeline sampling, file parsing
-  state/        Editor store with undo/redo, glide between formations, autosave and file save/open
-  components/   React UI: Stage (SVG), Timeline, Inspector, TopBar
+  model/        Pure data and logic (no React): types, choreography edits, music timing, file parsing
+  state/        Editor store with undo/redo, glide between formations, music playback, autosave and file save/open
+  components/   React UI: Stage (SVG), Timeline, MusicTimeline, Inspector, TopBar
 scripts/        Repo tooling (check-private.mjs: scan for personal or private info)
 docs/           Architecture, ArrangeUs research, tech plan and roadmap
 ```
@@ -68,5 +76,5 @@ docs/           Architecture, ArrangeUs research, tech plan and roadmap
 See [docs/architecture.md](docs/architecture.md) for the full architecture. AI agents should start with [AGENTS.md](AGENTS.md).
 
 - Stage coordinates are feet from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
-- Saved files are versioned JSON (`"format": "unison", "version": 2`); older versions are migrated when opened (version 1 used meters).
+- Saved files are versioned JSON (`"format": "unison", "version": 3`); older versions are migrated when opened (version 1 used meters, version 2 had no timing or music).
 - All document changes go through `editor.commit(...)` in `src/state/store.ts`, which is what makes them undoable.
