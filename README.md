@@ -27,6 +27,7 @@ A dance formation planner for teams: put dancers on a stage, build formations, t
   - **Formations** mode has no timing: a piece is just its sequence of formations.
   - **Music** mode times the formations to a song. Click **Add music…** to load an MP3 (or M4A, WAV…). The song is **saved inside the `.unison` file**, so sharing the file shares the music too. The bottom bar shows the waveform and a block for each formation: dancers hold still during a block and move during the gap to the next one. Drag a block to move it in time, drag its edges to change when it starts or ends (blocks push their neighbors along, and edges snap to the playhead), or type exact times in the side panel. Press **Space** to play: the stage animates in sync with the music. **+ Formation** adds one at the playhead, and **[** / **]** start or end the current formation at the playhead.
 - **Paths**: ghost markers and dashed paths show where each dancer came from and, optionally, where they go next.
+- **Custom paths**: select a dancer and drag the small hollow dot on their path to bend it, as many times as you like. Drag a point to move it, or double-click it to remove it. In the side panel, choose **Smooth** curves or sharp **Corners**, or **Straighten** the path again. Dancers follow their paths when gliding between formations and during music playback. Paths keep their shape when you move a dancer's start or end spot.
 - **Undo/redo** for every change (each opened project starts with a fresh history).
 - **Stage-only view**: the button in the stage's top-right corner (or **F**) hides the top bar, side panel and formation strip so the stage fills the window. Click it again to bring them back.
 
@@ -76,5 +77,5 @@ docs/           Architecture, ArrangeUs research, tech plan and roadmap
 See [docs/architecture.md](docs/architecture.md) for the full architecture. AI agents should start with [AGENTS.md](AGENTS.md).
 
 - Stage coordinates are feet from center stage: +x is the audience's right (stage left) and +y is downstage, toward the audience.
-- Saved files are versioned JSON (`"format": "unison", "version": 3`); older versions are migrated when opened (version 1 used meters, version 2 had no timing or music).
+- Saved files are versioned JSON (`"format": "unison", "version": 4`); older versions are migrated when opened (version 1 used meters, version 2 had no timing or music, version 3 had no custom paths).
 - All document changes go through `editor.commit(...)` in `src/state/store.ts`, which is what makes them undoable.

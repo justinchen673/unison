@@ -1,6 +1,6 @@
 import { DEFAULT_STAGE, gridLines } from './stage.ts'
 import { GAP, HOLD, defaultStart, roundTime, shiftFrom } from './timing.ts'
-import type { Choreography, Dancer, Formation, Point, Positions, StageSize } from './types.ts'
+import type { Choreography, Dancer, Formation, Path, PathPoint, Point, Positions, StageSize } from './types.ts'
 
 export const PALETTE = ['#f87171', '#fb923c', '#facc15', '#a3e635', '#34d399', '#22d3ee', '#60a5fa', '#818cf8', '#c084fc', '#f472b6', '#e2e8f0', '#a8a29e']
 
@@ -16,7 +16,7 @@ export function createDancer(index: number): Dancer {
 }
 
 export function createFormation(name: string, positions: Positions, start = 0): Formation {
-  return { id: uid(), name, positions, notes: '', start, end: start + HOLD }
+  return { id: uid(), name, positions, notes: '', start, end: start + HOLD, paths: {} }
 }
 
 /** Centered rows of dancers, as spread out as fits across the stage: 6 or 4 ft apart, else 2 ft apart in rows. */
@@ -36,7 +36,7 @@ const byDancer = (dancers: Dancer[], points: Point[]): Positions => Object.fromE
 export function createChoreography(dancerCount: number): Choreography {
   const stage = { ...DEFAULT_STAGE }
   const dancers = Array.from({ length: dancerCount }, (_, i) => createDancer(i))
-  return { format: 'unison', version: 3, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
+  return { format: 'unison', version: 4, name: 'Untitled piece', stage, dancers, formations: [createFormation('', byDancer(dancers, lineUp(dancerCount, stage)))] }
 }
 
 /** Sample project with named dancers and several formations, used by unit tests (the app never loads it). */
@@ -92,11 +92,44 @@ export function addDancer(doc: Choreography, index: number): { doc: Choreography
 }
 
 export function removeDancers(doc: Choreography, ids: string[]): Choreography {
+  const keep = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => !ids.includes(id)))
   return {
     ...doc,
     dancers: doc.dancers.filter((d) => !ids.includes(d.id)),
-    formations: doc.formations.map((f) => ({ ...f, positions: Object.fromEntries(Object.entries(f.positions).filter(([id]) => !ids.includes(id))) })),
+    formations: doc.formations.map((f) => ({ ...f, positions: keep(f.positions), paths: keep(f.paths) })),
   }
+}
+
+/** Changes `dancer`'s path into formation `index`. A path with no points and no sharp corners is dropped (it's straight). */
+function withPath(doc: Choreography, index: number, dancer: string, update: (path: Path) => Path): Choreography {
+  return withFormation(doc, index, (f) => {
+    const path = update(f.paths[dancer] ?? { points: [], corners: false })
+    const { [dancer]: _, ...others } = f.paths
+    return { ...f, paths: path.points.length || path.corners ? { ...others, [dancer]: path } : others }
+  })
+}
+
+/** Sets point `point` of `dancer`'s path into formation `index`, or inserts a new point there when `insert` is true. */
+export function setPathPoint(doc: Choreography, index: number, dancer: string, point: number, value: PathPoint, insert: boolean): Choreography {
+  return withPath(doc, index, dancer, (path) => {
+    const points = [...path.points]
+    points.splice(point, insert ? 0 : 1, value)
+    return { ...path, points }
+  })
+}
+
+export function removePathPoint(doc: Choreography, index: number, dancer: string, point: number): Choreography {
+  return withPath(doc, index, dancer, (path) => ({ ...path, points: path.points.filter((_, i) => i !== point) }))
+}
+
+/** Smooth curves (`corners` false) or sharp corners for the paths of `dancers` into formation `index`. */
+export function setPathCorners(doc: Choreography, index: number, dancers: string[], corners: boolean): Choreography {
+  return dancers.reduce((d, id) => withPath(d, index, id, (path) => ({ ...path, corners })), doc)
+}
+
+/** Makes the paths of `dancers` into formation `index` straight lines again. */
+export function straightenPaths(doc: Choreography, index: number, dancers: string[]): Choreography {
+  return dancers.reduce((d, id) => withPath(d, index, id, (path) => ({ ...path, points: [] })), doc)
 }
 
 /**
@@ -107,7 +140,7 @@ export function removeDancers(doc: Choreography, ids: string[]): Choreography {
 export function duplicateFormation(doc: Choreography, index: number, start?: number): Choreography {
   const original = doc.formations[index]
   const s = roundTime(Math.max(start ?? original.end + GAP, original.end))
-  const copy = { ...original, id: uid(), name: '', notes: '', start: s, end: s + HOLD }
+  const copy = { ...original, id: uid(), name: '', notes: '', start: s, end: s + HOLD, paths: {} }
   const next = doc.formations[index + 1]
   const inserted = { ...doc, formations: [...doc.formations.slice(0, index + 1), copy, ...doc.formations.slice(index + 1)] }
   return next ? shiftFrom(inserted, index + 2, copy.end + GAP - next.start) : inserted

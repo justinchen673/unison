@@ -30,7 +30,7 @@ export function sampleAt(formations: Formation[], t: number): Sample {
   const f = formations[index]
   const next = formations[index + 1]
   if (!next || t <= f.end) return { index, positions: f.positions, moving: false }
-  return { index, positions: interpolate(f.positions, next.positions, ease((t - f.end) / (next.start - f.end))), moving: true }
+  return { index, positions: interpolate(f.positions, next.positions, ease((t - f.end) / (next.start - f.end)), next.paths), moving: true }
 }
 
 /** Last moment anything happens: the end of the music or of the last formation, whichever is later. */

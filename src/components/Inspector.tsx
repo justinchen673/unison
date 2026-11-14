@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, removeFormation, updateDancers, updateFormation } from '../model/choreography.ts'
+import { PALETTE, addDancer, formationTitle, moveFormation, removeDancers, removeFormation, setPathCorners, straightenPaths, updateDancers, updateFormation } from '../model/choreography.ts'
 import { MAX_GRID, MAX_STAGE, MIN_GRID, MIN_STAGE, clamp, gridSize, snapStep } from '../model/stage.ts'
 import { retime } from '../model/timing.ts'
 import type { StageSize } from '../model/types.ts'
@@ -23,6 +23,8 @@ export function Inspector({ state, onAddFormation, onSelect }: InspectorProps) {
   const formation = doc.formations[current]
   const next = doc.formations[current + 1]
   const selected = doc.dancers.filter((d) => selection.includes(d.id))
+  const allCorners = selected.every((d) => formation.paths[d.id]?.corners)
+  const anyCurved = selected.some((d) => formation.paths[d.id]?.points.length)
   const musicMode = view.mode === 'music'
 
   const setFormation = (patch: Parameters<typeof updateFormation>[2], field: string) =>
@@ -99,6 +101,19 @@ export function Inspector({ state, onAddFormation, onSelect }: InspectorProps) {
                 onChange={(e) => editor.commit((d) => updateDancers(d, selection, { color: e.target.value }), `color:${selection.join()}`)} />
             </div>
           </div>
+          {current > 0 && (
+            <div className="field">
+              <span>Path here from formation {current}</span>
+              <div className="row">
+                <div className="segmented" role="group" aria-label="Path shape">
+                  <button aria-pressed={!allCorners} title="Smooth curves through the path's points" onClick={() => editor.commit((d) => setPathCorners(d, current, selection, false))}>Smooth</button>
+                  <button aria-pressed={allCorners} title="Straight lines with sharp corners at the path's points" onClick={() => editor.commit((d) => setPathCorners(d, current, selection, true))}>Corners</button>
+                </div>
+                <button className="btn" disabled={!anyCurved} title="Go back to a straight line" onClick={() => editor.commit((d) => straightenPaths(d, current, selection))}>Straighten</button>
+              </div>
+              <p className="hint">Drag the hollow dot on a path to bend it. Drag a point to move it; double-click it to remove it.</p>
+            </div>
+          )}
           <button className="btn danger" onClick={() => editor.commit((d) => removeDancers(d, selection))}>
             Remove {selected.length === 1 ? 'dancer' : `${selected.length} dancers`} from piece
           </button>

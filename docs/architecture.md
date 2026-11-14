@@ -54,6 +54,7 @@ src/
     stage.ts             Stage geometry: snapping, clamping, offstage test, group drag math
     choreography.ts      Factories (new project, sample project for tests) and pure edit functions
     timing.ts            Music mode timing: where dancers are at a given time, re-timing formations
+    path.ts              Custom paths: relative path points ↔ stage points, smooth/cornered routes, moving along a route
     interpolate.ts       Easing and blending positions between two formations (glides and music mode transitions)
     file.ts              Save-file serialize/parse with validation and repair
     *.test.ts            Vitest unit tests, next to the code they test
@@ -108,7 +109,9 @@ With a project open, `App` renders the editor as a CSS grid (`.app` in `index.cs
 Choreography { format: 'unison'; version: 3; name; stage: StageSize; dancers: Dancer[]; formations: Formation[]; music?: Music }
 StageSize    { width; depth; grid }           // feet; width/depth = performance area only (wings are extra); grid = side of each grid square
 Dancer       { id; name; label; color }       // label = 1–3 chars drawn in the marker; color = #rrggbb
-Formation    { id; name; positions: Positions; notes; start; end }   // start/end = seconds, music mode only
+Formation    { id; name; positions: Positions; notes; start; end; paths: Record<dancerId, Path> }   // start/end = seconds, music mode only; paths = how dancers get here from the previous formation
+Path         { points: PathPoint[]; corners }   // corners = straight segments with sharp corners instead of a smooth curve
+PathPoint    { along; across }   // relative to the straight line from start spot to end spot: along = fraction of the way, across = feet to the right of travel (as seen on screen)
 Music        { id; name; type; duration; data }   // embedded audio file: name = original file name, type = MIME type, duration = seconds, data = base64
 Positions    = Record<dancerId, Point>
 Point        { x; y }
@@ -130,6 +133,7 @@ Point        { x; y }
 - Formation `name` may be empty; the UI shows `Formation N` instead (`formationTitle`).
 - **Timing (music mode):** each formation is a block from `start` to `end` seconds where dancers hold still; they move during the gap until the next formation's `start`. Blocks never overlap and stay in order: `0 ≤ start ≤ end ≤ next.start`. A zero-length block (pass-through) and a zero gap (instant change) are allowed. Formations mode ignores timing, but every edit keeps it valid. Times are rounded to milliseconds.
 - **Music** is optional and embedded in the document (base64), so a `.unison` file is self-contained. It's about a third bigger than the audio file. Music changes (add, replace, remove) are undoable like any edit.
+- **Custom paths:** by default a dancer moves in a straight line from their spot in one formation to their spot in the next. `formation.paths[dancerId]` (on the **later** formation) can route them through any number of points instead, as a smooth curve or with sharp corners. Points are stored **relative to the straight line** between the two spots, not as stage coordinates, so when either spot moves (dragging a dancer, reordering formations, deleting the formation in between) the path keeps its shape and still starts and ends at the dancer. (ArrangeUs stores fixed curves that "go stale" after such edits.) A dancer who stays put has no direction of travel, so their points are measured in feet from the spot (+x, +y) instead. A path with no points and smooth style is the same as no path and is never stored; a path with no points but `corners: true` is kept so the chosen style survives straightening.
 - Ids come from `uid()` (16 hex chars from `crypto.getRandomValues`). Don't use `crypto.randomUUID`; some browsers don't expose it on `file://`.
 
 ## 5. Model layer (`src/model/`)
@@ -149,6 +153,7 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `gridLines(half, step)` | Positions every `step` feet from center outward within `±half` (used for grid lines and `addDancer`'s candidate spots, with `step = stage.grid`). |
 | `clamp`, `snap`, `tidy` | Number helpers. `tidy` rounds to 3 decimals so saved files don't contain float noise. |
 | `isOffstage(p, stage)` | `|x| > width/2`. |
+| `snapPoint(p, stage)`, `clampToFloor(p, stage)` | Snap a point to the half-square snap grid; keep it on the stage or in the wings. Used for path points. |
 | `shift(positions, ids, offset)` | New positions for `ids` moved by `offset` (tidied). |
 | `dragOffset(positions, ids, anchor, delta, stage, snapping)` | Offset to apply to a group drag. With snapping, the **grabbed dancer** (`anchor`) lands on the snap grid and the group moves rigidly with it. The group is clamped so nobody leaves the wings horizontally or the stage depth vertically. Also used (without snapping) for keyboard nudges. |
 
@@ -167,10 +172,13 @@ All functions are **pure**: they never mutate inputs and return new objects. Edi
 | `updateFormation(doc, i, patch)` | Patch `name`, `notes`. |
 | `updateDancers(doc, ids, patch)` | Patch `name`, `label`, `color` on several dancers. |
 | `addDancer(doc, i)` | Adds a dancer at the free grid-line intersection nearest center stage (at least 4 ft from everyone in formation `i`), at that **same spot in every formation**. Returns `{ doc, id }`. |
-| `removeDancers(doc, ids)` | Removes dancers and their positions everywhere. |
-| `duplicateFormation(doc, i, start?)` | Inserts a copy right after `i` (new id, empty name and notes). This is what "+ Formation" and "Duplicate" do. The copy's block starts at `start` (default: `GAP` = 2 s after `i` ends; never before `i` ends) and lasts `HOLD`. Later formations are shifted later (all by the same amount, keeping their spacing) only if the next one would start less than a `GAP` after the copy ends. |
+| `removeDancers(doc, ids)` | Removes dancers and their positions and paths everywhere. |
+| `duplicateFormation(doc, i, start?)` | Inserts a copy right after `i` (new id, empty name and notes, **no paths**: the copy is in the same spots, so nobody moves into it). This is what "+ Formation" and "Duplicate" do. The copy's block starts at `start` (default: `GAP` = 2 s after `i` ends; never before `i` ends) and lasts `HOLD`. Later formations are shifted later (all by the same amount, keeping their spacing) only if the next one would start less than a `GAP` after the copy ends. The formation after the copy keeps its paths, which now start from the copy's (identical) spots. |
+| `setPathPoint(doc, i, dancer, point, value, insert)` | Sets path point `point` of `dancer`'s path into formation `i`, or inserts a new one there when `insert`. |
+| `removePathPoint(doc, i, dancer, point)` | Removes a path point. |
+| `setPathCorners(doc, i, dancers, corners)`, `straightenPaths(doc, i, dancers)` | Path style (smooth or sharp corners), and removing all points (keeping the style), for several dancers' paths into formation `i`. All path edits drop paths that end up straight and smooth. |
 | `removeFormation(doc, i)` | No-op when only one formation is left. Leaves a gap in time (later formations don't move). |
-| `moveFormation(doc, from, to)` | Reorder; no-op when `to` is out of range. **Time slots stay where they are**: formations swap places, but each position in the order keeps its `start`/`end`, so the piece still lines up with the music. |
+| `moveFormation(doc, from, to)` | Reorder; no-op when `to` is out of range. **Time slots stay where they are**: formations swap places, but each position in the order keeps its `start`/`end`, so the piece still lines up with the music. Paths stay with their formation (now starting from a different previous formation; being relative, they still connect the right spots). |
 
 ### `timing.ts`
 
@@ -181,7 +189,7 @@ Music mode timing. Pure functions over the timing invariants in §4.
 | `HOLD`, `GAP` | Defaults: 4 s block, 2 s gap. |
 | `roundTime(t)` | Rounds to ms, never below 0. |
 | `defaultStart(i)` | `i × (HOLD + GAP)`: back-to-back default timing. |
-| `sampleAt(formations, t)` | `{ index, positions, moving }` at time `t`: inside a block that formation's positions; in a gap the eased (`ease`) blend toward the next formation (`moving: true`); before the first block the first formation, after the last block the last one. `index` is the formation reached most recently. |
+| `sampleAt(formations, t)` | `{ index, positions, moving }` at time `t`: inside a block that formation's positions; in a gap the eased (`ease`) move toward the next formation along its custom paths (`moving: true`); before the first block the first formation, after the last block the last one. `index` is the formation reached most recently. |
 | `pieceLength(doc)` | Later of the music's end and the last formation's end. Playback stops here. |
 | `earliestStart(doc, i)` | Sum of the lengths of formations before `i`: the earliest `i` can start if everything before it is packed from 0. |
 | `retime(doc, i, start, end)` | Sets formation `i`'s block (start ≥ `earliestStart`, end ≥ start). Neighbors it would overlap are **pushed** out of the way keeping their lengths (later ones later, earlier ones earlier), and the push stops at the first neighbor that doesn't overlap. Returns `doc` unchanged if nothing changes. Used by block drags, the start/end fields and `[`/`]`. |
@@ -192,13 +200,23 @@ Music mode timing. Pure functions over the timing invariants in §4.
 | Export | Purpose |
 | --- | --- |
 | `ease(t)` | Cosine ease-in-out on `[0, 1]`. |
-| `interpolate(from, to, t)` | Per-dancer linear blend (dancers missing from `from` stay at their `to` position). Used for the formations mode glide and for music mode transitions. |
+| `interpolate(from, to, t, paths?, backward?)` | Positions `t` of the way from `from` to `to` (dancers missing from `from` stay at their `to` position). Dancers without a path in `paths` move in a straight line; dancers with one move along its `route`, by distance (`pointAlong`). `paths` are always the **later** formation's; with `backward` (`from` is the later formation), dancers travel the same route in reverse. Used for the formations mode glide and for music mode transitions. |
+
+### `path.ts`
+
+| Export | Purpose |
+| --- | --- |
+| `toStage(point, a, b)`, `fromStage(q, a, b)` | Convert between a `PathPoint` and stage feet for a move from `a` to `b` (see the custom paths invariant in §4). `fromStage` rounds to 3 decimals. |
+| `controlPoints(a, b, path?)` | `[a, …path points on stage, b]`. |
+| `route(a, b, path?)` | The polyline the dancer travels: `[a, b]` without points; the control points with `corners`; otherwise a **centripetal Catmull-Rom** curve through every control point (no loops or overshoot, unlike the uniform kind), sampled 16 times per piece, with the ends extended straight so it starts and ends naturally. |
+| `pieceMidpoints(a, b, path?)` | Halfway point of each piece of the route between consecutive control points (where the "bend here" handles go). |
+| `routeLength(points)`, `pointAlong(points, fraction)`, `sliceRoute(points, from, to)` | Length; the point a fraction of the way along by distance (so dancers keep an even pace around curves); the part between two distances (to trim guide lines at the markers). |
 
 ### `file.ts`
 
 - `serialize(doc)`: pretty-printed JSON of the `Choreography` object, as is (the music's base64 data is one long string).
 - `parseMusic(value)`: validates embedded music; returns `undefined` unless `data` is a non-empty string. Fills in a missing id, name (`Music`), type (`audio/mpeg`) or duration (0).
-- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or a `version` other than 1, 2 or 3 (a newer version says it may need a newer copy of Unison). **Version 1 files were in meters**: their stage size and positions are multiplied by `FEET_PER_METER` (positions tidied to 3 decimals, stage sizes rounded to whole feet). The result is always version 3. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 6–200 ft (default 40 × 24); the grid square size goes through `gridSize` (default 2 ft when missing, e.g. in files from before the setting existed or version 1 files); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; **timing**: a missing or invalid (negative, non-number) `start` defaults to a `GAP` after the previous formation's end (0 for the first), a missing `end` to `start + HOLD`, and overlaps are repaired by moving `start` up to the previous end and `end` up to `start` (so version 1/2 files get back-to-back default blocks); `hold`/`transition` fields from version 1 (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation; `music` goes through `parseMusic` and is omitted when invalid.
+- `parseChoreography(json)`: throws a readable `Error` for invalid JSON, `format !== 'unison'`, or a `version` other than 1–4 (a newer version says it may need a newer copy of Unison). **Version 1 files were in meters**: their stage size and positions are multiplied by `FEET_PER_METER` (positions tidied to 3 decimals, stage sizes rounded to whole feet). The result is always version 4. Otherwise it **repairs** rather than rejects: stage sizes are rounded and clamped to 6–200 ft (default 40 × 24); the grid square size goes through `gridSize` (default 2 ft when missing, e.g. in files from before the setting existed or version 1 files); dancers without a string id or with a duplicate id are dropped, and missing name/label/color are filled in (label truncated to 3 chars); a formation's missing positions come from the previous formation, else from `lineUp`; positions for unknown dancers are dropped; duplicate or missing formation ids get a new `uid()`; **timing**: a missing or invalid (negative, non-number) `start` defaults to a `GAP` after the previous formation's end (0 for the first), a missing `end` to `start + HOLD`, and overlaps are repaired by moving `start` up to the previous end and `end` up to `start` (so version 1/2 files get back-to-back default blocks); `hold`/`transition` fields from version 1 (and any other unknown fields) are dropped; an empty formation list gets one lined-up formation; `music` goes through `parseMusic` and is omitted when invalid; **paths** are kept only for known dancers, keeping only points whose `along` and `across` are finite numbers (tidied), with `corners` true only if exactly `true`, and dropped when they end up straight and smooth (files before version 4 have none).
 
 ## 6. State layer (`src/state/`)
 
@@ -276,7 +294,7 @@ Thin wrapper over the File System Access API (`showOpenFilePicker`, `showSaveFil
 
 `useMotion(doc, current)` returns the positions to draw. Internal state is one `Glide` or `null`:
 
-- `goTo(i)`: sets `current` to formation `i` and starts a 450 ms eased glide (`requestAnimationFrame`) from whatever is on screen (even mid-glide) to that formation. This is a fixed-speed preview, not a timing setting.
+- `goTo(i)`: sets `current` to formation `i` and starts a 450 ms eased glide (`requestAnimationFrame`) from whatever is on screen (even mid-glide) to that formation. This is a fixed-speed preview, not a timing setting. Stepping to the **next** formation follows its custom paths; stepping to the **previous** one follows the current formation's paths in reverse; jumping further glides in straight lines.
 - `stop()`: drops any glide immediately (used when the user starts editing, or before New/Open).
 
 Returned values: `positions`, `moving` (a glide is running), `goTo`, `stop`.
@@ -342,11 +360,13 @@ All shortcuts except undo/redo/save/open are ignored while focus is in an `input
 - Draws in SVG user units with `U = 12` units per foot (large enough units keep text crisp and above browsers' minimum font sizes). The `viewBox` covers the stage, both wings and margins for labels; the SVG scales to fill its area. Label margins and offsets are fixed SVG units, not feet, so labels look the same on any stage size.
 - Layers, back to front: wings with "STAGE RIGHT"/"STAGE LEFT" labels (stage right is on the audience's left), floor, grid lines every `stage.grid` feet (`gridLines`, center lines dashed), floor border, front-edge stage numbers (distance from center) on every grid line, or on every 2nd/3rd… line when squares are under 2 ft so numbers never sit closer than 2 ft apart, "UPSTAGE"/"AUDIENCE" labels, ghost guides, dancers, selection marquee.
 - **Dancers:** a `<g data-dancer=id>` with selection ring, colored circle, label (text color picked for contrast by `inkFor`, font shrinks for 3-char labels) and optional name. Offstage dancers are dimmed. The label is **optically centered**: `labelOffset` measures the label's actual glyph bounds with a canvas `measureText` (at 1000 px, then scaled, because browsers round metrics to whole pixels at small sizes; cached per text) and places its alphabetic baseline so the visible ink is centered. Plain `dominant-baseline: central` centers the em box instead and left digits and capitals about 8% of the radius too low.
-- **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and a path line trimmed to the marker edges. Guides are hidden while anything is moving.
+- **Guides:** when `prevPaths`/`nextPaths` are on, each dancer gets a dashed ghost circle at their previous/next position and their route (straight or custom, as a `<polyline>`) trimmed by the marker radius at both ends. **A selected dancer always shows the route into the current formation**, even with `prevPaths` off, so its path can be edited. Guides are hidden while anything is moving. Routes are computed from the positions on screen, so they follow a dancer being dragged.
+- **Path handles** (`PathHandles`, drawn above the dancers, for selected dancers when nothing is moving and no dancer drag is in progress): on the route into the current formation, and on the route to the next one when `nextPaths` is on. A hollow handle sits halfway along each piece of the route (`pieceMidpoints`); dragging it **inserts** a path point there. A filled handle sits on each path point; dragging moves it. Handles within 1.6 marker radii of either end are hidden so they never block grabbing the dancer. Each handle carries `data-path` (`add`/`point`), `data-formation` (the later formation, whose `paths` it edits), `data-path-dancer` and `data-point`.
 - **Pointer gestures** (pointer capture on the SVG). Any pointer down first calls `onEditStart` (`prepareEdit`). Then:
   - Shift/Ctrl/⌘+click a dancer toggles it in the selection.
   - Pressing a dancer starts a **drag** of the selection (or just that dancer if it isn't selected). While dragging, positions are previewed locally with `dragOffset`; on release the move is committed once (if it moved more than 0.15 ft).
   - Pressing empty space starts a **box select** (added to the current selection when a modifier key is held); dancers inside the box (using the positions on screen) are selected live.
+  - Pressing a **path handle** starts a path gesture (selection doesn't change). Each move converts the pointer position (snapped to the half-square grid when snapping is on, kept on the floor) to a `PathPoint` with `fromStage` and commits `setPathPoint` with a per-gesture coalesce key, so one drag is one undo step; a hollow handle inserts its point on the first move. Two presses on the same path point within 400 ms remove it (counted on pointer down, because pointer capture keeps `dblclick` from reaching the handle).
   - The current gesture is kept in both a ref (read by handlers, always fresh) and state (for rendering).
 
 ### `Timeline.tsx` (formations mode)
@@ -368,7 +388,7 @@ Navigation row (previous and next formation buttons, "Formation N of M") and a h
 Sections, top to bottom:
 
 1. **Formation:** name, notes; in music mode **Starts at / Ends at** (seconds, `NumberField` with `commitOnBlur`, then `retime`, which pushes neighbors) and a hint with the hold length and the time to move to the next formation; move earlier/later (via `onSelect`, so music mode follows with the playhead), Duplicate (`onAddFormation`), Delete.
-2. **Selected dancer(s)** (only with a selection): name and label (single selection only), palette swatches and a custom color input, remove.
+2. **Selected dancer(s)** (only with a selection): name and label (single selection only), palette swatches and a custom color input; from the second formation on, the **path here from the previous formation**: a Smooth / Corners switch (`setPathCorners`; shows Corners when every selected dancer's path has corners) and **Straighten** (`straightenPaths`; enabled when any selected path has points), with a hint on how to bend paths; remove.
 3. **Dancers** list (click to select, modifier-click to toggle) and **Add dancer** (adds near center of the current formation and selects them).
 4. **Stage & view:** width/depth (6–200 ft, whole feet), **grid square size** (1–20 ft in half-foot steps, rounded by `gridSize`; one coalesced undo step per edit), and the four view toggles. The shortcut list shows the current nudge sizes.
 5. **Keyboard shortcuts** (collapsible; music mode adds its keys).
@@ -395,18 +415,20 @@ A project file (`<name>.unison`) contains `serialize(doc)`, which is plain JSON:
 ```json
 {
   "format": "unison",
-  "version": 3,
+  "version": 4,
   "name": "Spring show",
   "stage": { "width": 40, "depth": 24, "grid": 2 },
   "dancers": [{ "id": "3f9c…", "name": "Ava", "label": "A", "color": "#f87171" }],
   "formations": [
-    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -15, "y": 0 } }, "notes": "", "start": 0, "end": 4 }
+    { "id": "a1b2…", "name": "Opening line", "positions": { "3f9c…": { "x": -15, "y": 0 } }, "notes": "", "start": 0, "end": 4, "paths": {} },
+    { "id": "d4e5…", "name": "Diagonal", "positions": { "3f9c…": { "x": -6, "y": 8 } }, "notes": "", "start": 6, "end": 10,
+      "paths": { "3f9c…": { "points": [{ "along": 0.5, "across": 3 }], "corners": false } } }
   ],
   "music": { "id": "c4d5…", "name": "song.mp3", "type": "audio/mpeg", "duration": 215.3, "data": "SUQzBAAAAAAA…" }
 }
 ```
 
-All lengths are feet; times are seconds. `music` is optional; its `data` is the whole audio file, base64-encoded, so the project file is self-contained (and about a third bigger than the audio). Version history: **1** = meters (converted on open); **2** = feet; **3** = formation `start`/`end` and embedded `music` (current). `stage.grid` was added within version 2 without a bump: files without it simply get the 2 ft default they were already using. Version 3 was a bump because a version 2 app would silently drop the timing and music when re-saving; with the bump it refuses the file instead.
+All lengths are feet; times are seconds. `music` is optional; its `data` is the whole audio file, base64-encoded, so the project file is self-contained (and about a third bigger than the audio). Version history: **1** = meters (converted on open); **2** = feet; **3** = formation `start`/`end` and embedded `music`; **4** = custom `paths` (current). `stage.grid` was added within version 2 without a bump: files without it simply get the 2 ft default they were already using. Versions 3 and 4 were bumps because an older app would silently drop the new data (timing and music; paths) when re-saving; with the bump it refuses the file instead.
 
 The file extension is `.unison`, but `parseChoreography` only looks at the content (`format` and `version`), not the file name. The same JSON (minus the audio data, see §6 autosave) is stored in `localStorage` for autosave. **Any change that this parser couldn't read correctly from an older file (new required fields, renamed fields, changed meaning), or that an older app would lose when re-saving, must bump `version`** and teach `parseChoreography` to migrate older versions, so existing files and autosaves keep opening. Removing a field that the parser simply ignores in older files (as with the old `hold`/`transition` times) doesn't need a bump.
 
@@ -436,7 +458,7 @@ These keep the "double-click one file, any OS" promise. Breaking one usually wor
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including meters conversion, default and repaired timing, embedded music), music mode timing (`sampleAt`, `retime` pushing and clamping), formation and dancer edits (including duplicate/reorder timing), store behavior with no project / fresh history on open / unsaved-changes tracking / close. |
+| `npm test` | Unit tests: glide interpolation, drag snapping/clamping, file round-trip/repair/rejection (including meters conversion, default and repaired timing, embedded music, paths), music mode timing (`sampleAt`, `retime` pushing and clamping), custom paths (relative anchoring, smooth/corner routes, even pace forward and backward), formation and dancer edits (including duplicate/reorder timing and path edits), store behavior with no project / fresh history on open / unsaved-changes tracking / close. |
 | `npm run lint` | Oxlint. |
 | `npm run check:private` | No personal or private information in files that would be committed (see §10). Required before finishing any change. |
 | `npm run build` | Type-check (`tsc -b`) + single-file build. |
@@ -445,4 +467,4 @@ There's no automated UI test suite yet. UI changes should be checked by opening 
 
 ## 12. Not implemented yet
 
-The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, counts/beats and BPM (music mode works in seconds; there's no beat grid, tap-to-mark or snapping to beats), per-dancer timing within a transition, playback speed control, video export, curved paths, position tools (align, mirror, rotate…), formation presets, drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).
+The prototype intentionally leaves out (see [plan.md](plan.md) for the roadmap): a multi-piece library, dancer shapes and per-formation colors, counts/beats and BPM (music mode works in seconds; there's no beat grid, tap-to-mark or snapping to beats), per-dancer timing within a transition (everyone leaves and arrives together, whatever their path's length), playback speed control, video export, position tools (align, mirror, rotate…), formation presets, path presets (e.g. "arc around"), drag-reordering in the strip, props, backgrounds, export (PDF/PNG/video), 3D, and collaboration. Stage numbers and units are feet only (no unit switch).

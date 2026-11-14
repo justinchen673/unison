@@ -1,7 +1,8 @@
 import { useRef, useState, type PointerEvent } from 'react'
-import { setPositions } from '../model/choreography.ts'
-import { DANCER_RADIUS, WING, dragOffset, gridLines, isOffstage, shift } from '../model/stage.ts'
-import type { Choreography, Point, Positions } from '../model/types.ts'
+import { removePathPoint, setPathPoint, setPositions } from '../model/choreography.ts'
+import { controlPoints, fromStage, pieceMidpoints, route, routeLength, sliceRoute } from '../model/path.ts'
+import { DANCER_RADIUS, WING, clampToFloor, dragOffset, gridLines, isOffstage, shift, snapPoint } from '../model/stage.ts'
+import type { Choreography, Path, Point, Positions } from '../model/types.ts'
 import { editor, type ViewOptions } from '../state/store.ts'
 import { inkFor, toggleId } from './ui.ts'
 
@@ -12,6 +13,8 @@ const R = DANCER_RADIUS * U
 const LABEL_SIZE = [1.25, 1.25, 1.04, 0.83].map((k) => k * R)
 /** Moves shorter than this (feet) count as a click, not a drag. */
 const MIN_MOVE = 0.15
+/** Two presses on a path point within this many milliseconds delete it. */
+const DOUBLE_PRESS_MS = 400
 
 const measurer = document.createElement('canvas').getContext('2d')
 const MEASURE_SIZE = 1000
@@ -40,6 +43,8 @@ function labelOffset(text: string, size: number): Point {
 type Gesture =
   | { kind: 'drag'; ids: string[]; anchor: string; start: Point; delta: Point }
   | { kind: 'box'; start: Point; end: Point; base: string[] }
+  /** Dragging point `point` of `dancer`'s path into formation `formation` (`insert`: the point doesn't exist yet). */
+  | { kind: 'path'; formation: number; dancer: string; point: number; insert: boolean; key: string }
 
 interface StageProps {
   doc: Choreography
@@ -55,6 +60,7 @@ interface StageProps {
 export function Stage({ doc, current, positions, selection, view, moving, onEditStart }: StageProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const gestureRef = useRef<Gesture | null>(null)
+  const lastPointPress = useRef<{ id: string; at: number } | null>(null)
   const [gesture, setGesture] = useState<Gesture | null>(null)
   const { width: W, depth: D } = doc.stage
   const outer = W / 2 + WING
@@ -80,7 +86,22 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
     const id = (e.target as Element).closest('[data-dancer]')?.getAttribute('data-dancer')
     const additive = e.shiftKey || e.metaKey || e.ctrlKey
     e.currentTarget.setPointerCapture(e.pointerId)
-    if (id && additive) {
+    const handle = (e.target as Element).closest('[data-path]')
+    if (handle) {
+      const formation = Number(handle.getAttribute('data-formation'))
+      const dancer = handle.getAttribute('data-path-dancer')!
+      const point = Number(handle.getAttribute('data-point'))
+      const insert = handle.getAttribute('data-path') === 'add'
+      const pressed = `${formation}:${dancer}:${point}`
+      const last = lastPointPress.current
+      lastPointPress.current = insert ? null : { id: pressed, at: e.timeStamp }
+      if (!insert && last?.id === pressed && e.timeStamp - last.at < DOUBLE_PRESS_MS) {
+        lastPointPress.current = null
+        editor.commit((d) => removePathPoint(d, formation, dancer, point))
+        return
+      }
+      updateGesture({ kind: 'path', formation, dancer, point, insert, key: `path:${e.timeStamp}` })
+    } else if (id && additive) {
       editor.select(toggleId(selection, id))
     } else if (id) {
       const ids = selection.includes(id) ? selection : [id]
@@ -97,6 +118,15 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
     const g = gestureRef.current
     if (!g) return
     const p = toStage(e)
+    if (g.kind === 'path') {
+      const a = doc.formations[g.formation - 1]?.positions[g.dancer]
+      const b = doc.formations[g.formation]?.positions[g.dancer]
+      if (!a || !b) return
+      const q = clampToFloor(view.snap ? snapPoint(p, doc.stage) : p, doc.stage)
+      editor.commit((d) => setPathPoint(d, g.formation, g.dancer, g.point, fromStage(q, a, b), g.insert), g.key)
+      if (g.insert) updateGesture({ ...g, insert: false })
+      return
+    }
     if (g.kind === 'drag') {
       updateGesture({ ...g, delta: { x: p.x - g.start.x, y: p.y - g.start.y } })
       return
@@ -124,8 +154,8 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
   if (gesture?.kind === 'drag') {
     shown = { ...positions, ...shift(formation.positions, gesture.ids, dragOffset(formation.positions, gesture.ids, gesture.anchor, gesture.delta, doc.stage, view.snap)) }
   }
-  const prev = view.prevPaths ? doc.formations[current - 1]?.positions : undefined
-  const next = view.nextPaths ? doc.formations[current + 1]?.positions : undefined
+  const prevFormation = doc.formations[current - 1]
+  const nextFormation = doc.formations[current + 1]
   const box = gesture?.kind === 'box' ? gesture : null
   const xs = gridLines(W / 2, doc.stage.grid)
   const ys = gridLines(D / 2, doc.stage.grid)
@@ -154,12 +184,17 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
       <text className="edge-label" x={0} y={(-D / 2) * U - 10}>UPSTAGE</text>
       <text className="edge-label" x={0} y={(D / 2) * U + 29}>AUDIENCE</text>
 
-      {!moving && doc.dancers.map((d) => (
-        <g key={d.id} className="guides" stroke={d.color}>
-          {prev?.[d.id] && <Guide from={prev[d.id]} to={shown[d.id]} ghost={prev[d.id]} className="prev" />}
-          {next?.[d.id] && <Guide from={shown[d.id]} to={next[d.id]} ghost={next[d.id]} className="next" />}
-        </g>
-      ))}
+      {!moving && doc.dancers.map((d) => {
+        // A selected dancer always shows the path into this formation, so it can be edited.
+        const from = view.prevPaths || selection.includes(d.id) ? prevFormation?.positions[d.id] : undefined
+        const to = view.nextPaths ? nextFormation?.positions[d.id] : undefined
+        return (
+          <g key={d.id} className="guides" stroke={d.color}>
+            {from && <Guide points={route(from, shown[d.id], formation.paths[d.id])} ghost={from} className="prev" />}
+            {to && <Guide points={route(shown[d.id], to, nextFormation.paths[d.id])} ghost={to} className="next" />}
+          </g>
+        )
+      })}
 
       {doc.dancers.map((d) => {
         const p = shown[d.id]
@@ -174,6 +209,17 @@ export function Stage({ doc, current, positions, selection, view, moving, onEdit
           </g>
         )
       })}
+
+      {!moving && gesture?.kind !== 'drag' && doc.dancers.filter((d) => selection.includes(d.id) && shown[d.id]).map((d) => (
+        <g key={d.id}>
+          {prevFormation?.positions[d.id] && (
+            <PathHandles formation={current} dancer={d.id} color={d.color} a={prevFormation.positions[d.id]} b={shown[d.id]} path={formation.paths[d.id]} />
+          )}
+          {view.nextPaths && nextFormation?.positions[d.id] && (
+            <PathHandles formation={current + 1} dancer={d.id} color={d.color} a={shown[d.id]} b={nextFormation.positions[d.id]} path={nextFormation.paths[d.id]} />
+          )}
+        </g>
+      ))}
 
       {box && (
         <rect className="marquee" x={Math.min(box.start.x, box.end.x) * U} y={Math.min(box.start.y, box.end.y) * U}
@@ -190,19 +236,39 @@ function Label({ text, color }: { text: string; color: string }) {
   return <text className="label" x={offset.x} y={offset.y} fill={inkFor(color)} fontSize={size}>{text}</text>
 }
 
-/** Faded "ghost" marker at a neighbouring formation's position plus a dashed path between it and the dancer. */
-function Guide({ from, to, ghost, className }: { from: Point; to: Point; ghost: Point; className: string }) {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const length = Math.hypot(dx, dy)
+/** Faded "ghost" marker at a neighbouring formation's position plus a dashed path (straight or custom) between it and the dancer. */
+function Guide({ points, ghost, className }: { points: Point[]; ghost: Point; className: string }) {
+  const length = routeLength(points)
   if (length < MIN_MOVE) return null
-  const trim = DANCER_RADIUS / length
+  const line = length > 2 * DANCER_RADIUS ? sliceRoute(points, DANCER_RADIUS, length - DANCER_RADIUS) : null
   return (
     <g className={className}>
       <circle className="ghost" cx={ghost.x * U} cy={ghost.y * U} r={R} />
-      {length > 2 * DANCER_RADIUS && (
-        <line x1={(from.x + dx * trim) * U} y1={(from.y + dy * trim) * U} x2={(to.x - dx * trim) * U} y2={(to.y - dy * trim) * U} />
-      )}
+      {line && <polyline points={line.map((p) => `${p.x * U},${p.y * U}`).join(' ')} />}
+    </g>
+  )
+}
+
+/**
+ * Handles for editing a selected dancer's path from `a` (previous formation) to `b` (formation `formation`): a hollow
+ * handle halfway along each piece of the path (drag it to bend the path there) and a filled one on each path point
+ * (drag to move, double-click to remove). Hidden where they would sit on top of the dancer.
+ */
+function PathHandles({ formation, dancer, color, a, b, path }: { formation: number; dancer: string; color: string; a: Point; b: Point; path?: Path }) {
+  const clear = (p: Point) => Math.hypot(p.x - a.x, p.y - a.y) > 1.6 * DANCER_RADIUS && Math.hypot(p.x - b.x, p.y - b.y) > 1.6 * DANCER_RADIUS
+  const data = { 'data-formation': formation, 'data-path-dancer': dancer }
+  return (
+    <g className="path-handles">
+      {pieceMidpoints(a, b, path).map((p, i) => clear(p) && (
+        <circle key={`add${i}`} className="path-add" data-path="add" data-point={i} {...data} cx={p.x * U} cy={p.y * U} r={4} stroke={color}>
+          <title>Drag to bend the path</title>
+        </circle>
+      ))}
+      {controlPoints(a, b, path).slice(1, -1).map((p, i) => (
+        <circle key={`point${i}`} className="path-point" data-path="point" data-point={i} {...data} cx={p.x * U} cy={p.y * U} r={4.5} fill={color}>
+          <title>Drag to move this point; double-click to remove it</title>
+        </circle>
+      ))}
     </g>
   )
 }

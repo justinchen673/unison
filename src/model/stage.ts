@@ -32,6 +32,15 @@ export function gridLines(half: number, step: number): number[] {
 
 export const isOffstage = (p: Point, stage: StageSize) => Math.abs(p.x) > stage.width / 2
 
+/** Snaps a point to the snap grid (every half square). */
+export const snapPoint = (p: Point, stage: StageSize): Point => ({ x: snap(p.x, snapStep(stage)), y: snap(p.y, snapStep(stage)) })
+
+/** Keeps a point on the stage or in the wings. */
+export const clampToFloor = (p: Point, stage: StageSize): Point => ({
+  x: clamp(p.x, -stage.width / 2 - WING, stage.width / 2 + WING),
+  y: clamp(p.y, -stage.depth / 2, stage.depth / 2),
+})
+
 /** New positions for `ids` after moving them by `offset`. */
 export const shift = (positions: Positions, ids: string[], offset: Point): Positions =>
   Object.fromEntries(ids.map((id) => [id, { x: tidy(positions[id].x + offset.x), y: tidy(positions[id].y + offset.y) }]))

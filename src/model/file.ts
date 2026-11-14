@@ -1,7 +1,7 @@
 import { PALETTE, createFormation, lineUp, uid } from './choreography.ts'
 import { DEFAULT_STAGE, FEET_PER_METER, MAX_STAGE, MIN_STAGE, clamp, gridSize, tidy } from './stage.ts'
 import { GAP, HOLD, roundTime } from './timing.ts'
-import type { Choreography, Dancer, Formation, Music, Point } from './types.ts'
+import type { Choreography, Dancer, Formation, Music, Path, Point } from './types.ts'
 
 export const serialize = (doc: Choreography) => JSON.stringify(doc, null, 2)
 
@@ -31,7 +31,7 @@ export function parseChoreography(json: string): Choreography {
     throw new Error('The file is not valid JSON.')
   }
   if (!isObject(raw) || raw.format !== 'unison') throw new Error('This is not a Unison file.')
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) throw new Error(`Unsupported Unison file version: ${String(raw.version)}. It may need a newer copy of Unison.`)
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4) throw new Error(`Unsupported Unison file version: ${String(raw.version)}. It may need a newer copy of Unison.`)
   const scale = raw.version === 1 ? FEET_PER_METER : 1
   const size = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? clamp(Math.round(v * scale), MIN_STAGE, MAX_STAGE) : fallback)
 
@@ -61,10 +61,23 @@ export function parseChoreography(json: string): Choreography {
     const id = typeof f.id === 'string' && !formations.some((x) => x.id === f.id) ? f.id : uid()
     const previousEnd = formations.at(-1)?.end
     const start = Math.max(seconds(f.start) ?? (previousEnd === undefined ? 0 : previousEnd + GAP), previousEnd ?? 0)
-    formations.push({ id, name: text(f.name, ''), positions, notes: text(f.notes, ''), start, end: Math.max(seconds(f.end) ?? start + HOLD, start) })
+    formations.push({ id, name: text(f.name, ''), positions, notes: text(f.notes, ''), start, end: Math.max(seconds(f.end) ?? start + HOLD, start), paths: parsePaths(f.paths, dancers) })
   }
   if (!formations.length) formations.push(createFormation('', Object.fromEntries(dancers.map((d, i) => [d.id, lined[i]]))))
 
   const music = parseMusic(raw.music)
-  return { format: 'unison', version: 3, name: text(raw.name, 'Untitled piece'), stage, dancers, formations, ...(music && { music }) }
+  return { format: 'unison', version: 4, name: text(raw.name, 'Untitled piece'), stage, dancers, formations, ...(music && { music }) }
+}
+
+/** Paths for known dancers, keeping only valid points; straight paths (no points, no corners) are dropped. */
+function parsePaths(v: unknown, dancers: Dancer[]): Record<string, Path> {
+  const given = isObject(v) ? v : {}
+  const paths: Record<string, Path> = {}
+  for (const { id } of dancers) {
+    const p = given[id]
+    if (!isObject(p)) continue
+    const points = objects(p.points).filter((q) => Number.isFinite(q.along) && Number.isFinite(q.across)).map((q) => ({ along: tidy(q.along as number), across: tidy(q.across as number) }))
+    if (points.length || p.corners === true) paths[id] = { points, corners: p.corners === true }
+  }
+  return paths
 }

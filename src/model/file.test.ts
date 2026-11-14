@@ -33,7 +33,7 @@ describe('parseChoreography', () => {
       format: 'unison', version: 1, stage: { width: 12, depth: 8 }, dancers: [{ id: 'a' }],
       formations: [{ positions: { a: { x: 1, y: -2 } } }],
     }))
-    expect(doc).toMatchObject({ version: 3, stage: { width: 39, depth: 26, grid: 2 } })
+    expect(doc).toMatchObject({ version: 4, stage: { width: 39, depth: 26, grid: 2 } })
     expect(doc.formations[0].positions.a).toEqual({ x: 3.281, y: -6.562 })
   })
 
@@ -42,7 +42,7 @@ describe('parseChoreography', () => {
       format: 'unison', version: 1, dancers: [{ id: 'a' }],
       formations: [{ id: 'f', name: 'Start', positions: { a: { x: 0, y: 0 } }, hold: 2, transition: 1.5, notes: '' }],
     }))
-    expect(doc.formations[0]).toEqual({ id: 'f', name: 'Start', positions: { a: { x: 0, y: 0 } }, notes: '', start: 0, end: 4 })
+    expect(doc.formations[0]).toEqual({ id: 'f', name: 'Start', positions: { a: { x: 0, y: 0 } }, notes: '', start: 0, end: 4, paths: {} })
   })
 
   it('gives untimed formations back-to-back blocks and pushes overlapping blocks apart', () => {
@@ -58,6 +58,21 @@ describe('parseChoreography', () => {
   })
 
   it('refuses files from a newer version of Unison', () => {
-    expect(() => parseChoreography('{"format": "unison", "version": 4}')).toThrow('Unsupported Unison file version: 4')
+    expect(() => parseChoreography('{"format": "unison", "version": 5}')).toThrow('Unsupported Unison file version: 5')
+  })
+
+  it('keeps valid paths for known dancers and drops the rest', () => {
+    const doc = parseChoreography(JSON.stringify({
+      format: 'unison', version: 4, dancers: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+      formations: [{}, { paths: {
+        a: { points: [{ along: 0.5, across: 2 }, { along: 'x', across: 1 }], corners: true },
+        b: { points: [] },
+        c: { points: [{ along: 0.25, across: -1 }] },
+        ghost: { points: [{ along: 0.5, across: 2 }] },
+      } }],
+    }))
+    expect(doc.version).toBe(4)
+    expect(doc.formations[1].paths).toEqual({ a: { points: [{ along: 0.5, across: 2 }], corners: true }, c: { points: [{ along: 0.25, across: -1 }], corners: false } })
+    expect(parseChoreography(serialize(doc))).toEqual(doc)
   })
 })

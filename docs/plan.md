@@ -48,7 +48,7 @@ Verified with unit tests (drag snapping and limits, file parsing, music timing, 
 - Position tools: align, distribute, rotate, stretch, mirror, swap, and copy/paste positions across formation ranges.
 - Formation presets (line, circle, V, stagger/window, block, diagonal) that **assign dancers to minimize total travel**.
 - Drag-reorder in the formation strip, and formation colors.
-- Curved transition paths.
+- ~~Curved transition paths.~~ Done: custom paths through any number of points, smooth or with sharp corners, stored relative to each move so they don't go stale.
 - Stage options: a feet/meters switch, backstage depth, background image, and a "dancer's view" (flipped) toggle. (Grid square size is done.)
 
 ### Phase 2: music and counts (the big differentiator)

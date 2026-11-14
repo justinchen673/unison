@@ -321,7 +321,8 @@ textarea {
   content: '● ';
 }
 
-.mode-switch {
+.mode-switch,
+.segmented {
   display: flex;
   padding: 2px;
   border: 1px solid var(--border);
@@ -329,7 +330,8 @@ textarea {
   background: var(--bg);
 }
 
-.mode-switch button {
+.mode-switch button,
+.segmented button {
   height: 24px;
   padding: 0 12px;
   border: 0;
@@ -339,11 +341,21 @@ textarea {
   cursor: pointer;
 }
 
-.mode-switch button:hover {
+.segmented button {
+  flex: 1;
+}
+
+.row > .segmented {
+  flex: 1;
+}
+
+.mode-switch button:hover,
+.segmented button:hover {
   color: var(--text);
 }
 
-.mode-switch button[aria-pressed='true'] {
+.mode-switch button[aria-pressed='true'],
+.segmented button[aria-pressed='true'] {
   background: var(--accent);
   color: #fff;
 }
@@ -551,13 +563,15 @@ textarea {
   pointer-events: none;
 }
 
-.guides line {
+.guides polyline {
+  fill: none;
   stroke-width: 2;
   stroke-dasharray: 6 5;
+  stroke-linejoin: round;
   opacity: 0.6;
 }
 
-.guides .next line {
+.guides .next polyline {
   stroke-width: 3;
   stroke-dasharray: 1 6;
   stroke-linecap: round;
@@ -575,6 +589,26 @@ textarea {
   stroke: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
+}
+
+/* Custom path handles on selected dancers' paths. */
+.path-add {
+  fill: var(--floor);
+  stroke-width: 2;
+  cursor: grab;
+  opacity: 0.85;
+}
+
+.path-point {
+  stroke: #fff;
+  stroke-width: 1.5;
+  cursor: grab;
+}
+
+.path-add:hover,
+.path-point:hover {
+  stroke-width: 3;
+  opacity: 1;
 }
 
 /* ---------- Timeline ---------- */

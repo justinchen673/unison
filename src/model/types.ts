@@ -30,6 +30,25 @@ export interface Formation {
    */
   start: number
   end: number
+  /** Custom paths for how dancers get here from the previous formation, by dancer id. Dancers without one move in a straight line. */
+  paths: Record<string, Path>
+}
+
+/**
+ * A dancer's route from their spot in one formation to their spot in the next, through `points`. Points are stored
+ * relative to the straight line between the two spots, so the path's shape follows along when either spot moves.
+ */
+export interface Path {
+  points: PathPoint[]
+  /** Straight segments with sharp corners at the points, instead of a smooth curve through them. */
+  corners: boolean
+}
+
+export interface PathPoint {
+  /** How far along the straight line from start to end, as a fraction (0 = start, 1 = end; may go beyond). */
+  along: number
+  /** Feet to the side of the straight line; positive is to the right of the direction of travel, as seen on screen. */
+  across: number
 }
 
 /** An audio file embedded in the project so it travels with the .unison file. */
@@ -56,8 +75,8 @@ export interface StageSize {
 
 export interface Choreography {
   format: 'unison'
-  /** 3 added formation timing and music. Version 2 files get default timing; version 1 files (meters) are also converted to feet. */
-  version: 3
+  /** 4 added custom paths; 3 added formation timing and music. Older files are upgraded (version 1 files are also converted from meters to feet). */
+  version: 4
   name: string
   stage: StageSize
   dancers: Dancer[]
